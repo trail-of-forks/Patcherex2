@@ -33,6 +33,7 @@ class InsertInstructionPatch(Patch):
         detour_pos=-1,
         symbols=None,
         is_thumb=False,
+        base_reg=None,
     ) -> None:
         self.addr = None
         self.name = None
@@ -45,6 +46,7 @@ class InsertInstructionPatch(Patch):
         self.detour_pos = detour_pos
         self.symbols = symbols if symbols else {}
         self.is_thumb = is_thumb
+        self.base_reg = base_reg
 
     def apply(self, p):
         if self.addr:
@@ -54,6 +56,7 @@ class InsertInstructionPatch(Patch):
                 force_insert=self.force_insert,
                 detour_pos=self.detour_pos,
                 symbols=self.symbols,
+                base_reg=self.base_reg
             )
         elif self.name:
             assembled_size = len(

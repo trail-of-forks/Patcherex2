@@ -1,4 +1,5 @@
 import logging
+import re
 
 from ..allocation_managers.allocation_manager import MemoryFlag
 
@@ -11,7 +12,7 @@ class Utils:
         self.binary_path = binary_path
 
     def insert_trampoline_code(
-        self, addr, instrs, force_insert=False, detour_pos=-1, symbols=None
+        self, addr, instrs, force_insert=False, detour_pos=-1, symbols=None, base_reg=None
     ):
         logger.debug(f"Inserting trampoline code at {hex(addr)}: {instrs}")
         symbols = symbols if symbols else {}
@@ -29,31 +30,52 @@ class Utils:
             )
         else:
             moved_instrs = ""
-            moved_instrs_len = len(
-                self.p.assembler.assemble(
-                    self.get_instrs_to_be_moved(addr, ignore_unmovable=True),
-                    addr,  # TODO: we don't really need this addr, but better than 0x0 because 0x0 is too far away from the code
-                    is_thumb=self.p.binary_analyzer.is_thumb(addr),
-                )
+            moved_instrs_len = 0
+
+        load_addr_size = len(
+            self.p.assembler.assemble(
+                self.p.target.emit_load_addr(addr),
+                addr,
+                is_thumb=self.p.binary_analyzer.is_thumb(addr),
             )
-        trampoline_instrs_with_jump_back = (
-            instrs
-            + "\n"
-            + moved_instrs
-            + "\n"
-            + self.p.target.JMP_ASM.format(dst=hex(addr + moved_instrs_len))
         )
+        # calculate the expected size of the trampoline
+        # by summing the size of the compiled instructions
+        # excluding the POINTER_HANDLER, the size of the
+        # expanded POINTER_HANDLER pseudo-instruction
         trampoline_size = (
             len(
                 self.p.assembler.assemble(
-                    trampoline_instrs_with_jump_back,
+                    "\n".join(
+                        [
+                            line
+                            for line in instrs.splitlines()
+                            if "POINTER_HANDLER" not in line
+                        ]
+                    )
+                    + "\n"
+                    + moved_instrs
+                    + "\n"
+                    + self.p.target.JMP_ASM.format(dst=hex(addr + moved_instrs_len)),
                     addr,  # TODO: we don't really need this addr, but better than 0x0 because 0x0 is too far away from the code
                     symbols=symbols,
                     is_thumb=self.p.binary_analyzer.is_thumb(addr),
                 )
             )
-            + 4  # TODO: some time actual size is larger, but we need a better way to calculate it
+            + len(re.findall("POINTER_HANDLER", instrs)) * load_addr_size
         )
+        is_thumb = self.p.binary_analyzer.is_thumb(addr)
+        thunk_instrs_len = 0
+        if base_reg:
+            # emit thunk with addr instead of the trampoline address to calculate the size
+            thunk_instrs_len = len(
+                self.p.assembler.assemble(
+                    self.p.target.emit_thunk(base_reg, addr, is_thumb),
+                    addr,
+                    is_thumb=is_thumb,
+                )
+            )
+            trampoline_size += thunk_instrs_len
         if detour_pos == -1:
             trampoline_block = self.p.allocation_manager.allocate(
                 trampoline_size, align=0x4, flag=MemoryFlag.RX
@@ -65,8 +87,31 @@ class Utils:
             mem_addr = detour_pos
             file_addr = self.p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
         self.p.sypy_info["patcherex_added_functions"].append(hex(mem_addr))
+
+        if base_reg:
+            thunk_instrs = self.p.target.emit_thunk(
+                base_reg, mem_addr, is_thumb=is_thumb
+            )
+            thunk_len = len(
+                self.p.assembler.assemble(thunk_instrs, addr, is_thumb=is_thumb)
+            )
+        else:
+            thunk_instrs = ""
+            thunk_len = 0
+
+        # replace addresses here
+        instrs = self.rewrite_addresses(instrs, addr, thunk_len, mem_addr)
+
+        trampoline_instrs_with_jump_back = (
+            instrs
+            + "\n"
+            + moved_instrs
+            + "\n"
+            + self.p.target.JMP_ASM.format(dst=hex(addr + moved_instrs_len))
+        )
+
         trampoline_bytes = self.p.assembler.assemble(
-            trampoline_instrs_with_jump_back,
+            (thunk_instrs + "\n" + trampoline_instrs_with_jump_back),
             mem_addr,
             symbols=symbols,
             is_thumb=self.p.binary_analyzer.is_thumb(addr),
@@ -120,3 +165,41 @@ class Utils:
             if self.p.assembler.assemble(asm, addr, is_thumb=is_thumb) != insn:
                 return False
         return True
+
+    def rewrite_addresses(self, instrs, addr, thunk_len, mem_addr):
+        pointer_pat = re.compile(
+            r"#POINTER_HANDLER (?P<register>[^, ]+), [^0-9]?(?P<imm>[0-9]+)"
+        )
+
+        # uses a fake address to get the approximate size of
+        load_addr_insns_size = len(
+            self.p.assembler.assemble(self.p.target.emit_load_addr(addr))
+        )
+
+        instrs_size = (
+            len(
+                self.p.assembler.assemble(
+                    instrs, addr, is_thumb=self.p.binary_analyzer.is_thumb(addr)
+                )
+            )
+            + len(pointer_pat.findall(instrs)) * load_addr_insns_size
+        )
+
+        # rewrite addresses
+        new_instrs = []
+        for line in instrs.splitlines():
+            line = line.strip()
+            new_line = line
+            if match_result := pointer_pat.search(line):
+                reg_name = match_result.group("register")
+                goto_addr = int(match_result.group("imm"))
+                # only rewrite goto addresses in between the start of the moved instructions
+                # to the end of the moved instructions
+                if goto_addr - addr >= 0 and goto_addr - addr <= self.p.target.JMP_SIZE:
+                    goto_addr = mem_addr + thunk_len + instrs_size + (goto_addr - addr)
+                new_line = self.p.target.emit_load_addr(goto_addr, reg_name=reg_name)
+                logger.debug(f"#POINTER_HANDLER -> {new_line}")
+            new_instrs.append(new_line)
+        instrs = "\n".join(new_instrs)
+        logger.debug(f"Replace addresses: {instrs}")
+        return instrs

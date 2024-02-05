@@ -72,3 +72,22 @@ class ElfX8664Linux(Target):
         if utils == "default":
             return Utils(self.p, self.binary_path)
         raise NotImplementedError()
+
+    @staticmethod
+    def emit_thunk(base_reg, insert_addr, is_thumb=False):
+        scratch_reg = "r13" if base_reg == "r12" else "r12"
+        thunk_loc = insert_addr + 5
+        # move past the red zone so we
+        # don't clobber any locals
+        thunk_instrs = f"""
+        sub rsp, 128
+        push {scratch_reg}
+        call lb:
+        lb:
+        pop {base_reg}
+        mov {scratch_reg}, {thunk_loc}
+        sub {base_reg}, {scratch_reg}
+        pop {scratch_reg}
+        add rsp, 128
+        """
+        return thunk_instrs
