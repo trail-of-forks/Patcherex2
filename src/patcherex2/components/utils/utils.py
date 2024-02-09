@@ -89,18 +89,12 @@ class Utils:
         self.p.sypy_info["patcherex_added_functions"].append(hex(mem_addr))
 
         if base_reg:
-            thunk_instrs = self.p.target.emit_thunk(
+            instrs = self.p.target.emit_thunk(
                 base_reg, mem_addr, is_thumb=is_thumb
-            )
-            thunk_len = len(
-                self.p.assembler.assemble(thunk_instrs, addr, is_thumb=is_thumb)
-            )
-        else:
-            thunk_instrs = ""
-            thunk_len = 0
+            ) + instrs
 
         # replace addresses here
-        instrs = self.rewrite_addresses(instrs, addr, thunk_len, mem_addr)
+        instrs = self.rewrite_addresses(instrs, addr, mem_addr, is_thumb=is_thumb)
 
         trampoline_instrs_with_jump_back = (
             instrs
@@ -111,7 +105,7 @@ class Utils:
         )
 
         trampoline_bytes = self.p.assembler.assemble(
-            (thunk_instrs + "\n" + trampoline_instrs_with_jump_back),
+            trampoline_instrs_with_jump_back,
             mem_addr,
             symbols=symbols,
             is_thumb=self.p.binary_analyzer.is_thumb(addr),
@@ -166,7 +160,7 @@ class Utils:
                 return False
         return True
 
-    def rewrite_addresses(self, instrs, addr, thunk_len, mem_addr):
+    def rewrite_addresses(self, instrs, addr, mem_addr, is_thumb=False):
         pointer_pat = re.compile(
             r"#POINTER_HANDLER (?P<register>[^, ]+), [^0-9]?(?P<imm>[0-9]+)"
         )
@@ -196,7 +190,8 @@ class Utils:
                 # only rewrite goto addresses in between the start of the moved instructions
                 # to the end of the moved instructions
                 if goto_addr - addr >= 0 and goto_addr - addr <= self.p.target.JMP_SIZE:
-                    goto_addr = mem_addr + thunk_len + instrs_size + (goto_addr - addr)
+                    # TODO: setting the thumb bit using is_thumb isn't always necessarily true
+                    goto_addr = mem_addr + instrs_size + (goto_addr - addr) | int(is_thumb)
                 new_line = self.p.target.emit_load_addr(goto_addr, reg_name=reg_name)
                 logger.debug(f"#POINTER_HANDLER -> {new_line}")
             new_instrs.append(new_line)
