@@ -11,7 +11,7 @@ dependencies = [
     "angr",
     "pyelftools",
     "lief",
-    "keystone-engine@git+https://github.com/trail-of-forks/keystone@fix-directive-address-update2#subdirectory=bindings/python",
+    "keystone-engine@git+https://github.com/trail-of-forks/keystone@irene-main#subdirectory=bindings/python",
     "intelhex",
     "requests",
 ]
