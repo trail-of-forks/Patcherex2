@@ -162,7 +162,7 @@ class Utils:
 
     def rewrite_addresses(self, instrs, addr, mem_addr, is_thumb=False):
         pointer_pat = re.compile(
-            r"#POINTER_HANDLER (?P<register>[^, ]+), [^0-9]?(?P<imm>[0-9]+)"
+            r"POINTER_HANDLER (?P<register>[^, ]+), [^0-9]?(?P<imm>[0-9]+)"
         )
 
         # uses a fake address to get the approximate size of
@@ -173,7 +173,13 @@ class Utils:
         instrs_size = (
             len(
                 self.p.assembler.assemble(
-                    instrs, addr, is_thumb=self.p.binary_analyzer.is_thumb(addr)
+                    "\n".join(
+                        [
+                            line
+                            for line in instrs.splitlines()
+                            if "POINTER_HANDLER" not in line
+                        ]
+                    ), addr, is_thumb=self.p.binary_analyzer.is_thumb(addr)
                 )
             )
             + len(pointer_pat.findall(instrs)) * load_addr_insns_size
@@ -193,7 +199,7 @@ class Utils:
                     # TODO: setting the thumb bit using is_thumb isn't always necessarily true
                     goto_addr = mem_addr + instrs_size + (goto_addr - addr) | int(is_thumb)
                 new_line = self.p.target.emit_load_addr(goto_addr, reg_name=reg_name)
-                logger.debug(f"#POINTER_HANDLER -> {new_line}")
+                logger.debug(f"POINTER_HANDLER -> {new_line}")
             new_instrs.append(new_line)
         instrs = "\n".join(new_instrs)
         logger.debug(f"Replace addresses: {instrs}")
