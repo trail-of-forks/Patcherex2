@@ -197,7 +197,9 @@ class Utils:
                 # to the end of the moved instructions
                 if goto_addr - addr >= 0 and goto_addr - addr <= self.p.target.JMP_SIZE:
                     # TODO: setting the thumb bit using is_thumb isn't always necessarily true
-                    goto_addr = mem_addr + instrs_size + (goto_addr - addr) | int(is_thumb)
+                    goto_addr = mem_addr + instrs_size + (goto_addr - addr)
+                if is_thumb:
+                    goto_addr = goto_addr | int(is_thumb)
                 new_line = self.p.target.emit_load_addr(goto_addr, reg_name=reg_name)
                 logger.debug(f"POINTER_HANDLER -> {new_line}")
             new_instrs.append(new_line)
