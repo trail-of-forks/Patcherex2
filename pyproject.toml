@@ -11,7 +11,7 @@ dependencies = [
     "angr",
     "pyelftools",
     "lief",
-    "keystone-engine@git+https://github.com/trail-of-forks/keystone@irene-main#subdirectory=bindings/python",
+    "keystone-engine",
     "intelhex",
     "requests",
 ]
