@@ -80,13 +80,12 @@ class ElfPpcLinux(Target):
     # the current pc and stores it in the given register
     @staticmethod
     def emit_thunk(base_reg, insert_addr, is_thumb=False):
-        assert "%r" in base_reg
         scratch_reg1 = "%r4" if base_reg == "%r3" else "%r3"
         scratch_reg2 = "%r12" if base_reg == "%r11" else "%r11"
 
-        # add 12 since base_reg will contain
-        # the addr + 12
-        thunk_loc = insert_addr + 12
+        # add 20 since base_reg will contain
+        # the addr + 20
+        thunk_loc = insert_addr + 20
         thunk_l = 0xFFFF & thunk_loc
         thunk_h = 0xFFFF & (thunk_loc >> 16)
         thunk_instrs = f"""
@@ -107,3 +106,15 @@ class ElfPpcLinux(Target):
         """
 
         return thunk_instrs
+
+    @staticmethod
+    def emit_load_addr(addr, reg_name=None):
+        if reg_name is None:
+            reg_name = "%r1"
+        addr_l = 0xFFFF & addr
+        addr_h = 0xFFFF & (addr >> 16)
+        load_instrs = f"""
+        lis {reg_name}, {addr_h}
+        ori {reg_name}, {reg_name}, {addr_l}
+        """
+        return load_instrs
