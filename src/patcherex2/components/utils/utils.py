@@ -89,8 +89,13 @@ class Utils:
         self.p.sypy_info["patcherex_added_functions"].append(hex(mem_addr))
 
         if base_reg:
+            base_addr = mem_addr
+            # if the binary is non PIE, we should subtract the base
+            # so that the base is calculated correctly since mem_addr
+            if not self.p.binary_analyzer.p.loader.main_object.pic:
+                base_addr -= self.p.binary_analyzer.load_base
             instrs = self.p.target.emit_thunk(
-                base_reg, mem_addr, is_thumb=is_thumb
+                base_reg, base_addr, is_thumb=is_thumb
             ) + instrs
 
         # replace addresses here
