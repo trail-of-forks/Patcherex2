@@ -167,7 +167,7 @@ class Utils:
 
     def rewrite_addresses(self, instrs, addr, mem_addr, is_thumb=False):
         pointer_pat = re.compile(
-            r"POINTER_HANDLER (?P<register>[^, ]+), [^0-9]?(?P<imm>[0-9]+)"
+            r"POINTER_HANDLER (?P<register>[^, ]+), [^0-9]?(?P<imm>[0-9]+)(, [^0-9]?(?P<repair_if_moved>[0-1]))?"
         )
 
         # uses a fake address to get the approximate size of
@@ -198,9 +198,10 @@ class Utils:
             if match_result := pointer_pat.search(line):
                 reg_name = match_result.group("register")
                 goto_addr = int(match_result.group("imm"))
+                repair_if_moved = bool(match_result.group("repair_if_moved"))
                 # only rewrite goto addresses in between the start of the moved instructions
                 # to the end of the moved instructions
-                if goto_addr - addr >= 0 and goto_addr - addr <= self.p.target.JMP_SIZE:
+                if repair_if_moved and goto_addr - addr >= 0 and goto_addr - addr <= self.p.target.JMP_SIZE:
                     # TODO: setting the thumb bit using is_thumb isn't always necessarily true
                     goto_addr = mem_addr + instrs_size + (goto_addr - addr)
                 if is_thumb:
