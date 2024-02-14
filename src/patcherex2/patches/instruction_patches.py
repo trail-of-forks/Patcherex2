@@ -56,7 +56,7 @@ class InsertInstructionPatch(Patch):
                 force_insert=self.force_insert,
                 detour_pos=self.detour_pos,
                 symbols=self.symbols,
-                base_reg=self.base_reg
+                base_reg=self.base_reg,
             )
         elif self.name:
             assembled_size = len(

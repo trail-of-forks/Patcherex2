@@ -12,7 +12,13 @@ class Utils:
         self.binary_path = binary_path
 
     def insert_trampoline_code(
-        self, addr, instrs, force_insert=False, detour_pos=-1, symbols=None, base_reg=None
+        self,
+        addr,
+        instrs,
+        force_insert=False,
+        detour_pos=-1,
+        symbols=None,
+        base_reg=None,
     ):
         logger.debug(f"Inserting trampoline code at {hex(addr)}: {instrs}")
         symbols = symbols if symbols else {}
@@ -94,9 +100,10 @@ class Utils:
             # so that the base is calculated correctly since mem_addr
             if not self.p.binary_analyzer.p.loader.main_object.pic:
                 base_addr -= self.p.binary_analyzer.load_base
-            instrs = self.p.target.emit_thunk(
-                base_reg, base_addr, is_thumb=is_thumb
-            ) + instrs
+            instrs = (
+                self.p.target.emit_thunk(base_reg, base_addr, is_thumb=is_thumb)
+                + instrs
+            )
 
         # replace addresses here
         instrs = self.rewrite_addresses(instrs, addr, mem_addr, is_thumb=is_thumb)
@@ -184,7 +191,9 @@ class Utils:
                             for line in instrs.splitlines()
                             if "POINTER_HANDLER" not in line
                         ]
-                    ), addr, is_thumb=self.p.binary_analyzer.is_thumb(addr)
+                    ),
+                    addr,
+                    is_thumb=self.p.binary_analyzer.is_thumb(addr),
                 )
             )
             + len(pointer_pat.findall(instrs)) * load_addr_insns_size
@@ -201,7 +210,11 @@ class Utils:
                 repair_if_moved = bool(match_result.group("repair_if_moved"))
                 # only rewrite goto addresses in between the start of the moved instructions
                 # to the end of the moved instructions
-                if repair_if_moved and goto_addr - addr >= 0 and goto_addr - addr <= self.p.target.JMP_SIZE:
+                if (
+                    repair_if_moved
+                    and goto_addr - addr >= 0
+                    and goto_addr - addr <= self.p.target.JMP_SIZE
+                ):
                     # TODO: setting the thumb bit using is_thumb isn't always necessarily true
                     goto_addr = mem_addr + instrs_size + (goto_addr - addr)
                 if is_thumb:
