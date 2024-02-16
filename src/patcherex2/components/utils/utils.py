@@ -36,7 +36,13 @@ class Utils:
             )
         else:
             moved_instrs = ""
-            moved_instrs_len = 0
+            moved_instrs_len = len(
+                self.p.assembler.assemble(
+                    self.get_instrs_to_be_moved(addr, ignore_unmovable=True),
+                    addr,  # TODO: we don't really need this addr, but better than 0x0 because 0x0 is too far away from the code
+                    is_thumb=self.p.binary_analyzer.is_thumb(addr),
+                )
+            )
 
         load_addr_size = len(
             self.p.assembler.assemble(
