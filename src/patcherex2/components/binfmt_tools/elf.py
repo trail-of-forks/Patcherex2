@@ -246,7 +246,7 @@ class ELF(BinFmtTool):
                         "p_paddr": block.mem_addr,
                         "p_memsz": block.size,
                         "p_flags": block.flag,
-                        "p_align": max_align,  # TODO: what could be a good value for this?
+                        "p_align": 0x1000,  # TODO: what could be a good value for this?
                     }
                 )
             )
