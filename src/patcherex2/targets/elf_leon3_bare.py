@@ -14,7 +14,7 @@ from ..components.compilers.bcc import Bcc as BccCompiler
 from ..components.disassemblers.capstone import Capstone, capstone
 from ..components.utils.utils import Utils
 from .target import Target
-
+import archinfo
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +35,13 @@ class CustomElf(ELF):
 class ElfLeon3Bare(Target):
     @staticmethod
     def detect_target(binary_path):
+        with open(binary_path, "rb") as f:
+            magic = f.read(0x14)
+            print(magic[0x12:0x14])
+            if magic.startswith(b"\x7fELF") and magic.startswith(
+                b"\x00\x02", 0x12
+            ):  # EM_386
+                return True
         return False
 
     def get_assembler(self, assembler):
@@ -76,7 +83,11 @@ class ElfLeon3Bare(Target):
     def get_binary_analyzer(self, binary_analyzer):
         binary_analyzer = binary_analyzer or "angr"
         if binary_analyzer == "angr":
-            return Angr(self.binary_path)
+            return Angr(self.binary_path,angr_kwargs={
+                    "arch": archinfo.ArchPcode("sparc:BE:32:default"),
+                    "auto_load_libs": False,
+                    "load_debug_info": True,
+                })
         raise NotImplementedError()
 
     def get_utils(self, utils):
