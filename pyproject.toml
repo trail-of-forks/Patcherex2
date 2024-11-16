@@ -8,7 +8,7 @@ version = "0.0.0"
 requires-python = ">=3.8"
 readme = "README.md"
 dependencies = [
-    "angr",
+    "angr==9.2.91",
     "pyelftools",
     "pypcode",
     "lark",
