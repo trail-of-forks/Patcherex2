@@ -22,7 +22,8 @@ class Compiler:
         self,
         code: str,
         base=0,
-        symbols: dict[str, int] | None = None,
+        symbols: dict[str, int] | None = None, 
+        extension: str = ".c",
         extra_compiler_flags: list[str] | None = None,
         **kwargs,
     ) -> bytes:
@@ -31,8 +32,9 @@ class Compiler:
         if extra_compiler_flags is None:
             extra_compiler_flags = []
         with tempfile.TemporaryDirectory() as td:
+            code_name = f"code{extension}"
             # source file
-            with open(os.path.join(td, "code.c"), "w") as f:
+            with open(os.path.join(td, code_name), "w") as f:
                 f.write(code)
 
             # compile to object file
@@ -43,7 +45,7 @@ class Compiler:
                     + extra_compiler_flags
                     + [
                         "-c",
-                        os.path.join(td, "code.c"),
+                        os.path.join(td, code_name),
                         "-o",
                         os.path.join(td, "obj.o"),
                     ]

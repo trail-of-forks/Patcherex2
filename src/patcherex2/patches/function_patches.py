@@ -29,6 +29,7 @@ class ModifyFunctionPatch(Patch):
         code: str,
         detour_pos=-1,
         symbols: dict[str, int] | None = None,
+        extension: str = ".c",
         **kwargs,
     ) -> None:
         """
@@ -43,6 +44,7 @@ class ModifyFunctionPatch(Patch):
         self.detour_pos = detour_pos
         self.addr_or_name = addr_or_name
         self.symbols = symbols if symbols else {}
+        self.extension = extension
         self.compile_opts = kwargs["compile_opts"] if "compile_opts" in kwargs else {}
 
     def apply(self, p: Patcherex) -> None:
@@ -56,6 +58,7 @@ class ModifyFunctionPatch(Patch):
             p.compiler.compile(
                 self.code,
                 symbols=self.symbols,
+                extension=self.extension,
                 is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
                 **self.compile_opts,
             )
@@ -90,6 +93,7 @@ class ModifyFunctionPatch(Patch):
                 self.code,
                 mem_addr,
                 symbols=self.symbols,
+                extension=self.extension,
                 is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
                 **self.compile_opts,
             ),
