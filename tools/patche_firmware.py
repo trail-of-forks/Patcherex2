@@ -19,7 +19,7 @@ def patch_binary(binary_name: str, function_name: str, new_func_file: str):
         
         print(f"Patched binary saved as {output_name}")
     except Exception as e:
-        printf(f"Error occurred: {e!r}")
+        print(f"Error occurred: {e!r}")
         sys.exit(1)
 
 def main():    

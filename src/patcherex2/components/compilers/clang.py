@@ -9,12 +9,14 @@ logger = logging.getLogger(__name__)
 
 class Clang(Compiler):
     def __init__(
-        self, p, clang_version=15, compiler_flags: list[str] | None = None
+        self, p, clang_version : str | None = None, compiler_flags: list[str] | None = None
     ) -> None:
         super().__init__(p)
-        self.preserve_none = clang_version >= 19
-        if compiler_flags is None:
-            compiler_flags = []
-        self._compiler = f"clang-{clang_version}"
-        self._linker = f"ld.lld-{clang_version}"
-        self._compiler_flags = compiler_flags
+        if clang_version:
+            self.preserve_none = clang_version >= 19
+            self._compiler = f"clang-{clang_version}"
+            self._linker = f"ld.lld-{clang_version}"
+        else:
+            self._compiler = f"clang"
+            self._linker = f"ld.lld"
+        self._compiler_flags = compiler_flags or []
