@@ -30,6 +30,12 @@ ENV GHIDRA_INSTALL_DIR=/ghidra_11.0.3_PUBLIC
 COPY . /patcherex2
 
 RUN pip install -U pip pytest ruff
-RUN pip install -e /patcherex2[all]
+
+# Install patcherex2 dependencies without keystone-engine to avoid long ARM64 build times
+# Keystone is only needed for assembly patching, not for LLVM IR patching
+RUN pip install angr pyelftools pypcode lief intelhex requests pyhidra
+
+# Install patcherex2 in editable mode without dependencies (already installed above)
+RUN pip install --no-deps -e /patcherex2
 
 CMD ["/bin/bash"]

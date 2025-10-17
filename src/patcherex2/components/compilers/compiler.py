@@ -25,13 +25,15 @@ class Compiler:
         symbols: dict[str, int] | None = None, 
         extension: str = ".c",
         extra_compiler_flags: list[str] | None = None,
+        linker_script: str | None = None,
         **kwargs,
     ) -> bytes:
         if symbols is None:
             symbols = {}
         if extra_compiler_flags is None:
             extra_compiler_flags = []
-        with tempfile.TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory(delete=False) as td:
+            print(f"tmpdir: {td}")
             code_name = f"code{extension}"
             # source file
             with open(os.path.join(td, code_name), "w") as f:
@@ -50,16 +52,18 @@ class Compiler:
                         os.path.join(td, "obj.o"),
                     ]
                 )
+                print(args)
                 subprocess.run(args, check=True, capture_output=True)
             except subprocess.CalledProcessError as e:
                 logger.error(e.stderr.decode("utf-8"))
                 raise e
 
-            # linker script
-            _symbols = {}
-            _symbols.update(self.p.symbols)
-            _symbols.update(self.p.binary_analyzer.get_all_symbols())
-            _symbols.update(symbols)
+            if not linker_script:
+                # linker script
+                _symbols = {}
+                _symbols.update(self.p.symbols)
+                _symbols.update(self.p.binary_analyzer.get_all_symbols())
+                _symbols.update(symbols)
 
             # TODO: shouldn't put .rodata in .text, but otherwise switch case jump table won't work
             # Note that even we don't include .rodata here, cle might still include it if there is
@@ -72,11 +76,16 @@ class Compiler:
                         if section.name.startswith(".rodata")
                     ]
                 )
+            #print(linker_script_rodata_sections)
             linker_script_symbols = "".join(
                 f"{name} = {hex(addr)};" for name, addr in _symbols.items()
             )
+            
+            #linker_script_bss_symbols = " *(.bss) config_base = 0x4027508;"
 
-            linker_script = f"SECTIONS {{ .patcherex2 : SUBALIGN(0) {{ . = {hex(base)}; *(.text) {linker_script_rodata_sections} {linker_script_symbols} }} }}"
+
+            linker_script = f"SECTIONS {{ .patcherex2 : SUBALIGN(0) {{ . = {hex(base)}; *(.text) {linker_script_rodata_sections} {linker_script_symbols}}} }}"
+            #print(linker_script)
             with open(os.path.join(td, "linker.ld"), "w") as f:
                 f.write(linker_script)
 
@@ -90,6 +99,7 @@ class Compiler:
                     "-o",
                     os.path.join(td, "obj_linked.o"),
                 ]
+                print(args)
                 subprocess.run(args, check=True, capture_output=True)
             except subprocess.CalledProcessError as e:
                 logger.error(e.stderr.decode("utf-8"))

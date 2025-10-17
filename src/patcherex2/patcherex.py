@@ -107,7 +107,7 @@ class Patcherex:
                 x, (ModifyDataPatch, InsertDataPatch, RemoveDataPatch)
             )
         )
-        logger.debug(f"Applying patches: {self.patches}")
+        logger.info(f"Applying patches: {self.patches}")
         for patch in self.patches:
             patch.apply(self)
         self.binfmt_tool.finalize()

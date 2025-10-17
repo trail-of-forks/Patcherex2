@@ -54,6 +54,7 @@ class ModifyFunctionPatch(Patch):
         :param p: Patcherex instance.
         """
         func = p.binary_analyzer.get_function(self.addr_or_name)
+        print(f"address of func {func}")
         compiled_size = len(
             p.compiler.compile(
                 self.code,
@@ -63,6 +64,7 @@ class ModifyFunctionPatch(Patch):
                 **self.compile_opts,
             )
         )
+        print(f"compiled size {compiled_size}")
         if compiled_size <= func["size"]:
             mem_addr = func["addr"]
             file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
@@ -83,10 +85,12 @@ class ModifyFunctionPatch(Patch):
                 func["addr"],
                 is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
             )
+            print("Update binary with jump bytes")
             p.binfmt_tool.update_binary_content(
                 p.binary_analyzer.mem_addr_to_file_offset(func["addr"]),
                 jmp_bytes,
             )
+        print(f"update function in binary {file_addr}")
         p.binfmt_tool.update_binary_content(
             file_addr,
             p.compiler.compile(
