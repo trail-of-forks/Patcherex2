@@ -5,19 +5,83 @@ from patcherex2 import *
 
 def extract_functions_from_llvm_ir(llvm_ir_content: str) -> dict[str, str]:
     """
-    Extract all function definitions from LLVM IR content.
-    Returns a dictionary mapping function names to their complete definitions.
+    Extract all function definitions from LLVM IR content along with their dependencies.
+    Returns a dictionary mapping function names to their complete definitions including
+    required global variables, declarations, and metadata.
     """
     functions = {}
+
+    # Extract module-level components
+    # Global variables (e.g., @.str = private constant [10 x i8] c"FW_CONFIG\00")
+    global_vars = re.findall(
+        r'^@[\w.]+ = (?:private |internal |external |global )?(?:constant |global).*$',
+        llvm_ir_content,
+        re.MULTILINE
+    )
+
+    # Function declarations (e.g., declare void @arm_bl2_plat_arch_setup())
+    declarations = re.findall(
+        r'^declare.*?@\w+\([^)]*\).*?(?:\n|$)',
+        llvm_ir_content,
+        re.MULTILINE | re.DOTALL
+    )
+
+    # Attributes (e.g., attributes #0 = { convergent })
+    attributes = re.findall(
+        r'^attributes #\d+ = \{[^}]+\}',
+        llvm_ir_content,
+        re.MULTILINE
+    )
+
+    # Debug metadata (all lines starting with !)
+    metadata_lines = re.findall(
+        r'^![\w.]+ = .*$',
+        llvm_ir_content,
+        re.MULTILINE
+    )
 
     # Pattern to match function definitions in LLVM IR
     # Matches from 'define' to the closing brace, handling nested braces
     pattern = r'define\s+(?:dso_local\s+)?(?:\w+\s+)?@(\w+)\([^)]*\)[^{]*\{(?:[^{}]*|\{[^{}]*\})*\}'
 
+    # First pass: collect all function signatures from definitions as a map
+    # This allows functions to reference each other
+    local_function_decls_map = {}
+    for match in re.finditer(pattern, llvm_ir_content, re.MULTILINE | re.DOTALL):
+        func_name = match.group(1)
+        func_signature = match.group(0)
+        # Extract just the function signature (everything before the opening brace)
+        sig_match = re.match(r'(define\s+(?:dso_local\s+)?(?:\w+\s+)?@\w+\([^)]*\)[^{]*)', func_signature)
+        if sig_match:
+            signature = sig_match.group(1)
+            # Convert 'define' to 'declare' and strip attributes to create a declaration
+            # Remove everything after the closing paren and attributes reference
+            decl_match = re.match(r'define\s+(?:dso_local\s+)?(.*?@\w+\([^)]*\))', signature)
+            if decl_match:
+                declaration = f"declare {decl_match.group(1)}"
+                local_function_decls_map[func_name] = declaration
+
+    suffix = (
+        '\n\n' + '\n'.join(attributes) +
+        '\n\n' + '\n'.join(metadata_lines)
+    )
+
     for match in re.finditer(pattern, llvm_ir_content, re.MULTILINE | re.DOTALL):
         func_name = match.group(1)
         func_body = match.group(0)
-        functions[func_name] = func_body
+
+        # Build prefix with all local function declarations EXCEPT the current function
+        local_function_decls = [decl for name, decl in local_function_decls_map.items() if name != func_name]
+
+        prefix = (
+            '\n'.join(global_vars) + '\n\n' +
+            '\n'.join(declarations) + '\n' +
+            '\n'.join(local_function_decls) + '\n\n'
+        )
+
+        # Include all dependencies with the function
+        complete_code = prefix + func_body + suffix
+        functions[func_name] = complete_code
         print(f"Found function: {func_name}")
 
     return functions
@@ -45,8 +109,8 @@ def patch_binary(binary_name: str, function_mapping: dict[str, str], new_func_fi
             print("Error: No functions found in LLVM IR file")
             sys.exit(1)
 
-        # Initialize Patcherex
-        p = Patcherex(binary_name, target_opts={"binary_analyzer": "angr"})
+        # Initialize Patcherex with clang-19 (available in Docker)
+        p = Patcherex(binary_name, target_opts={"binary_analyzer": "angr", "compiler": "clang19"})
 
         # If no mapping provided, insert all functions from patch file
         if not function_mapping:
@@ -88,33 +152,49 @@ def patch_binary(binary_name: str, function_mapping: dict[str, str], new_func_fi
         insert_count = 0
 
         print(f"\nPreparing {len(patches_to_apply)} patch(es)...")
+
+        # IMPORTANT: Process InsertFunctionPatch first to pre-allocate symbols
+        # This allows ModifyFunctionPatch to reference newly inserted functions
+        insert_patches = []
+        modify_patches = []
+
         for original_func, patch_func, patch_type in patches_to_apply:
             func_code = available_functions[patch_func]
             patch_symbols = symbols if symbols else {}
 
             if patch_type == "modify":
-                print(f"Preparing ModifyFunctionPatch: {original_func} -> {patch_func}")
-                p.patches.append(
-                    ModifyFunctionPatch(
-                        original_func,
-                        func_code,
-                        symbols=patch_symbols,
-                        extension=".ll"
-                    )
-                )
-                modify_count += 1
+                modify_patches.append((original_func, patch_func, func_code, patch_symbols))
             else:  # insert
-                print(f"Preparing InsertFunctionPatch: {original_func} (new function)")
-                p.patches.append(
-                    InsertFunctionPatch(
-                        original_func,
-                        func_code,
-                        symbols=patch_symbols,
-                        compile_opts={"extension": ".ll"}
-                    )
-                )
-                insert_count += 1
+                insert_patches.append((original_func, patch_func, func_code, patch_symbols))
 
+        # Add InsertFunctionPatch first - they will be applied before ModifyFunctionPatch
+        # This ensures newly inserted functions are available as symbols when modifying other functions
+        print("\nAdding InsertFunctionPatch instances (will be applied first)...")
+        for original_func, patch_func, func_code, patch_symbols in insert_patches:
+            print(f"  Preparing InsertFunctionPatch: {original_func} (new function)")
+            p.patches.append(
+                InsertFunctionPatch(
+                    original_func,
+                    func_code,
+                    symbols=patch_symbols,
+                    compile_opts={"extension": ".ll"}
+                )
+            )
+            insert_count += 1
+            patch_count += 1
+
+        print("\nAdding ModifyFunctionPatch instances (will be applied after inserts)...")
+        for original_func, patch_func, func_code, patch_symbols in modify_patches:
+            print(f"  Preparing ModifyFunctionPatch: {original_func} -> {patch_func}")
+            p.patches.append(
+                ModifyFunctionPatch(
+                    original_func,
+                    func_code,
+                    symbols=patch_symbols,
+                    extension=".ll"
+                )
+            )
+            modify_count += 1
             patch_count += 1
 
         if patch_count == 0:

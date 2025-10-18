@@ -32,7 +32,8 @@ class Compiler:
             symbols = {}
         if extra_compiler_flags is None:
             extra_compiler_flags = []
-        with tempfile.TemporaryDirectory(delete=False) as td:
+        td = tempfile.mkdtemp()
+        try:
             print(f"tmpdir: {td}")
             code_name = f"code{extension}"
             # source file
@@ -80,7 +81,7 @@ class Compiler:
             linker_script_symbols = "".join(
                 f"{name} = {hex(addr)};" for name, addr in _symbols.items()
             )
-            
+
             #linker_script_bss_symbols = " *(.bss) config_base = 0x4027508;"
 
 
@@ -119,4 +120,6 @@ class Compiler:
                 compiled_start,
                 patcherex2_section.memsize - compiled_start,
             )
+        finally:
+            pass  # Keep temporary directory for debugging
         return compiled
