@@ -407,6 +407,10 @@ class InsertInstructionPatch(Patch):
 
     def _apply_asm(self, p) -> None:
         if self.addr:
+            logger.debug(f"Applying ASM instruction patch at address {hex(self.addr)}")
+            logger.debug(f"Initial instruction: {self.instr}")
+            logger.debug(f"save_context={self.save_context}, force_insert={self.force_insert}")
+
             if "SAVE_CONTEXT" in self.instr:
                 self.instr = self.instr.replace(
                     "SAVE_CONTEXT", f"\n{p.archinfo.save_context_asm}\n"
@@ -417,6 +421,9 @@ class InsertInstructionPatch(Patch):
                 )
             if self.save_context:
                 self.instr = f"{p.archinfo.save_context_asm}\n{self.instr}\n{p.archinfo.restore_context_asm}"
+
+            logger.debug(f"Final instruction after processing: {self.instr}")
+
             p.utils.insert_trampoline_code(
                 self.addr,
                 self.instr,

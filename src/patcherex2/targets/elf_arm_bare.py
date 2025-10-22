@@ -188,8 +188,15 @@ strb r3, [r1], #1
 subs r2, r2, #1
 bne copy
 """
+        import logging
+        logger = logging.getLogger(__name__)
+
         for insert_point in self.insert_points:
-            InsertInstructionPatch(insert_point, copy_to_ram, save_context=True).apply(
+            logger.debug(f"Applying InsertInstructionPatch at insert_point {hex(insert_point)}")
+            logger.debug(f"Copy to RAM code:\n{copy_to_ram}")
+            # Use force_insert=True to bypass movability checks for firmware entry point patching
+            # This is needed because entry point code may contain PC-relative instructions
+            InsertInstructionPatch(insert_point, copy_to_ram, save_context=True, force_insert=True).apply(
                 self.p
             )
         self.p.allocation_manager.finalize()

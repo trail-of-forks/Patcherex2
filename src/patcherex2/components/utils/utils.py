@@ -163,6 +163,16 @@ class Utils:
 
     def get_instrs_to_be_moved(self, addr: int, ignore_unmovable=False) -> str | None:
         basic_block = self.p.binary_analyzer.get_basic_block(addr)
+        logger.debug(f"Getting instructions to be moved at {hex(addr)}")
+        logger.debug(f"Basic block start: {hex(basic_block['start'])}, end: {hex(basic_block['end'])}")
+        logger.debug(f"Basic block instruction addresses: {[hex(a) for a in basic_block['instruction_addrs']]}")
+
+        if addr not in basic_block["instruction_addrs"]:
+            logger.error(f"Address {hex(addr)} not found in basic block instruction addresses")
+            logger.error(f"Basic block range: {hex(basic_block['start'])} - {hex(basic_block['end'])}")
+            logger.error(f"Available instruction addresses: {[hex(a) for a in basic_block['instruction_addrs']]}")
+            return None
+
         idx = basic_block["instruction_addrs"].index(addr)
         end = addr + self.p.archinfo.jmp_size
         instrs = b""
@@ -189,7 +199,10 @@ class Utils:
         return None
 
     def is_valid_insert_point(self, addr: int) -> bool:
-        return self.get_instrs_to_be_moved(addr) is not None
+        logger.debug(f"Checking if {hex(addr)} is a valid insert point")
+        result = self.get_instrs_to_be_moved(addr) is not None
+        logger.debug(f"Address {hex(addr)} is {'valid' if result else 'invalid'} insert point")
+        return result
 
     def is_movable_instruction(self, addr: int) -> bool:
         is_thumb = self.p.binary_analyzer.is_thumb(addr)

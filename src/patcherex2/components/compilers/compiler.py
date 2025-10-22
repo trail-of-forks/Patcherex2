@@ -101,14 +101,30 @@ class Compiler:
                     os.path.join(td, "obj_linked.o"),
                 ]
                 print(args)
-                subprocess.run(args, check=True, capture_output=True)
+                result = subprocess.run(args, check=True, capture_output=True)
+                logger.debug(f"Linker stdout: {result.stdout.decode('utf-8')}")
+                logger.debug(f"Linker stderr: {result.stderr.decode('utf-8')}")
             except subprocess.CalledProcessError as e:
-                logger.error(e.stderr.decode("utf-8"))
+                logger.error(f"Linker command failed: {' '.join(args)}")
+                logger.error(f"Linker stdout: {e.stdout.decode('utf-8') if e.stdout else '(empty)'}")
+                logger.error(f"Linker stderr: {e.stderr.decode('utf-8') if e.stderr else '(empty)'}")
+                logger.error(f"Return code: {e.returncode}")
+                logger.error(f"Temp directory (preserved): {td}")
                 raise e
 
             # extract compiled code
+            # Get load_options from kwargs if provided
+            load_options = kwargs.get("load_options", {})
+            main_opts = {"base_addr": 0x0}
+            # Extract rebase_granularity separately as it's a Loader parameter, not main_opts
+            rebase_granularity = load_options.get("rebase_granularity", 0x1000)
+            # Remove rebase_granularity from load_options before updating main_opts
+            load_options_for_main = {k: v for k, v in load_options.items() if k != "rebase_granularity"}
+            main_opts.update(load_options_for_main)
             ld = cle.Loader(
-                os.path.join(td, "obj_linked.o"), main_opts={"base_addr": 0x0}
+                os.path.join(td, "obj_linked.o"),
+                main_opts=main_opts,
+                rebase_granularity=rebase_granularity
             )
 
             patcherex2_section = next(

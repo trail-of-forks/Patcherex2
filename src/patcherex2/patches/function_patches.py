@@ -55,13 +55,37 @@ class ModifyFunctionPatch(Patch):
         """
         func = p.binary_analyzer.get_function(self.addr_or_name)
         print(f"address of func {func}")
+
+        # Merge extension with compile_opts, preferring compile_opts if it contains extension
+        compile_opts = dict(self.compile_opts)
+        if "extension" not in compile_opts:
+            compile_opts["extension"] = self.extension
+
+        # Merge p.symbols with self.symbols to include newly allocated functions
+        # p.symbols gets updated by InsertFunctionPatch when new functions are added
+        compile_symbols = dict(p.symbols)
+        compile_symbols.update(self.symbols)
+
+        # For size calculation, use placeholder addresses close to the function being modified
+        # This avoids ARM relocation range issues during the size calculation compile
+        # The actual compile (below) will use the real addresses
+        size_calc_symbols = dict(compile_symbols)
+        placeholder_offset = 0x1000  # Use addresses within range for size calculation
+        for sym_name, sym_addr in compile_symbols.items():
+            # If symbol is far from function address, use a placeholder address nearby
+            if abs(sym_addr - func["addr"]) > 0x1000000:  # More than ~16MB away
+                size_calc_symbols[sym_name] = func["addr"] + placeholder_offset
+                placeholder_offset += 0x100
+
+        # Use the function's address as base for size calculation to ensure relocations work
+        # This is important for ARM thumb mode where bl instructions have limited range
         compiled_size = len(
             p.compiler.compile(
                 self.code,
-                symbols=self.symbols,
-                extension=self.extension,
+                base=func["addr"],
+                symbols=size_calc_symbols,
                 is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
-                **self.compile_opts,
+                **compile_opts,
             )
         )
         print(f"compiled size {compiled_size}")
@@ -79,12 +103,24 @@ class ModifyFunctionPatch(Patch):
             else:
                 mem_addr = self.detour_pos
                 file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
-            jmp_instr = p.archinfo.jmp_asm.format(dst=hex(mem_addr))
-            jmp_bytes = p.assembler.assemble(
-                jmp_instr,
-                func["addr"],
-                is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
-            )
+            # For ARM Thumb, use ldr pc to support long-distance jumps
+            is_thumb = p.binary_analyzer.is_thumb(func["addr"])
+            if is_thumb and p.archinfo.__class__.__name__ == 'ArmInfo':
+                # Use ldr pc, [pc, #0] followed by the address literal
+                # This allows jumping to any 32-bit address
+                # ldr pc, [pc, #0] in Thumb encoding is 0xf000 0xf8df
+                # Followed by 4-byte address (need to set LSB for Thumb mode)
+                target_addr = mem_addr | 1  # Set LSB to indicate Thumb mode
+                jmp_bytes = bytes([0xdf, 0xf8, 0x00, 0xf0])  # ldr.w pc, [pc]
+                jmp_bytes += target_addr.to_bytes(4, byteorder='little')
+            else:
+                # Use standard jump instruction for non-Thumb or if within range
+                jmp_instr = p.archinfo.jmp_asm.format(dst=hex(mem_addr))
+                jmp_bytes = p.assembler.assemble(
+                    jmp_instr,
+                    func["addr"],
+                    is_thumb=is_thumb,
+                )
             print("Update binary with jump bytes")
             p.binfmt_tool.update_binary_content(
                 p.binary_analyzer.mem_addr_to_file_offset(func["addr"]),
@@ -96,10 +132,9 @@ class ModifyFunctionPatch(Patch):
             p.compiler.compile(
                 self.code,
                 mem_addr,
-                symbols=self.symbols,
-                extension=self.extension,
+                symbols=compile_symbols,
                 is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
-                **self.compile_opts,
+                **compile_opts,
             ),
         )
 
@@ -203,10 +238,14 @@ class InsertFunctionPatch(Patch):
                 symbols=self.symbols,
             )
         elif self.name:
+            # Merge p.symbols with self.symbols to include newly allocated functions
+            compile_symbols = dict(p.symbols)
+            compile_symbols.update(self.symbols)
+
             compiled_size = len(
                 p.compiler.compile(
                     self.code,
-                    symbols=self.symbols,
+                    symbols=compile_symbols,
                     is_thumb=self.is_thumb,
                     **self.compile_opts,
                 )
@@ -222,12 +261,13 @@ class InsertFunctionPatch(Patch):
                 file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
             p.sypy_info["patcherex_added_functions"].append(hex(mem_addr))
             p.symbols[self.name] = mem_addr
+            print(f"InsertFunctionPatch: allocated '{self.name}' at {hex(mem_addr)}")
             p.binfmt_tool.update_binary_content(
                 file_addr,
                 p.compiler.compile(
                     self.code,
                     mem_addr,
-                    symbols=self.symbols,
+                    symbols=compile_symbols,
                     is_thumb=self.is_thumb,
                     **self.compile_opts,
                 ),
