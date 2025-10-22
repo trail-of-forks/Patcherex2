@@ -192,8 +192,6 @@ bne copy
         logger = logging.getLogger(__name__)
 
         for insert_point in self.insert_points:
-            logger.debug(f"Applying InsertInstructionPatch at insert_point {hex(insert_point)}")
-            logger.debug(f"Copy to RAM code:\n{copy_to_ram}")
             # Use force_insert=True to bypass movability checks for firmware entry point patching
             # This is needed because entry point code may contain PC-relative instructions
             InsertInstructionPatch(insert_point, copy_to_ram, save_context=True, force_insert=True).apply(

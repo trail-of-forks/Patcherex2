@@ -102,13 +102,10 @@ class Compiler:
                 ]
                 print(args)
                 result = subprocess.run(args, check=True, capture_output=True)
-                logger.debug(f"Linker stdout: {result.stdout.decode('utf-8')}")
-                logger.debug(f"Linker stderr: {result.stderr.decode('utf-8')}")
             except subprocess.CalledProcessError as e:
                 logger.error(f"Linker command failed: {' '.join(args)}")
                 logger.error(f"Linker stdout: {e.stdout.decode('utf-8') if e.stdout else '(empty)'}")
                 logger.error(f"Linker stderr: {e.stderr.decode('utf-8') if e.stderr else '(empty)'}")
-                logger.error(f"Return code: {e.returncode}")
                 logger.error(f"Temp directory (preserved): {td}")
                 raise e
 

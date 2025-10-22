@@ -199,9 +199,7 @@ class Utils:
         return None
 
     def is_valid_insert_point(self, addr: int) -> bool:
-        logger.debug(f"Checking if {hex(addr)} is a valid insert point")
         result = self.get_instrs_to_be_moved(addr) is not None
-        logger.debug(f"Address {hex(addr)} is {'valid' if result else 'invalid'} insert point")
         return result
 
     def is_movable_instruction(self, addr: int) -> bool:

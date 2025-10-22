@@ -103,24 +103,12 @@ class ModifyFunctionPatch(Patch):
             else:
                 mem_addr = self.detour_pos
                 file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
-            # For ARM Thumb, use ldr pc to support long-distance jumps
-            is_thumb = p.binary_analyzer.is_thumb(func["addr"])
-            if is_thumb and p.archinfo.__class__.__name__ == 'ArmInfo':
-                # Use ldr pc, [pc, #0] followed by the address literal
-                # This allows jumping to any 32-bit address
-                # ldr pc, [pc, #0] in Thumb encoding is 0xf000 0xf8df
-                # Followed by 4-byte address (need to set LSB for Thumb mode)
-                target_addr = mem_addr | 1  # Set LSB to indicate Thumb mode
-                jmp_bytes = bytes([0xdf, 0xf8, 0x00, 0xf0])  # ldr.w pc, [pc]
-                jmp_bytes += target_addr.to_bytes(4, byteorder='little')
-            else:
-                # Use standard jump instruction for non-Thumb or if within range
-                jmp_instr = p.archinfo.jmp_asm.format(dst=hex(mem_addr))
-                jmp_bytes = p.assembler.assemble(
-                    jmp_instr,
-                    func["addr"],
-                    is_thumb=is_thumb,
-                )
+            jmp_instr = p.archinfo.jmp_asm.format(dst=hex(mem_addr))
+            jmp_bytes = p.assembler.assemble(
+                jmp_instr,
+                func["addr"],
+                is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
+            )
             print("Update binary with jump bytes")
             p.binfmt_tool.update_binary_content(
                 p.binary_analyzer.mem_addr_to_file_offset(func["addr"]),
