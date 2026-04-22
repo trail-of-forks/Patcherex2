@@ -148,8 +148,11 @@ def extract_functions_from_llvm_ir(llvm_ir_content: str) -> dict[str, str]:
     )
 
     # Pattern to match function definitions in LLVM IR
-    # Matches from 'define' to the closing brace, handling nested braces
-    pattern = r'define\s+(?:dso_local\s+)?(?:\w+\s+)?@(\w+)\([^)]*\)[^{]*\{(?:[^{}]*|\{[^{}]*\})*\}'
+    # Matches from 'define' to the closing brace, handling nested braces.
+    # `(?:\w+\s+)*` covers any number of linkage / visibility / return-type
+    # tokens between `define` and `@funcname` (e.g. `define internal i32 @foo`
+    # has two words — `internal` and `i32` — before the name).
+    pattern = r'define\s+(?:dso_local\s+)?(?:\w+\s+)*@(\w+)\([^)]*\)[^{]*\{(?:[^{}]*|\{[^{}]*\})*\}'
 
     # First pass: collect all function signatures from definitions as a map
     # This allows functions to reference each other
@@ -158,14 +161,26 @@ def extract_functions_from_llvm_ir(llvm_ir_content: str) -> dict[str, str]:
         func_name = match.group(1)
         func_signature = match.group(0)
         # Extract just the function signature (everything before the opening brace)
-        sig_match = re.match(r'(define\s+(?:dso_local\s+)?(?:\w+\s+)?@\w+\([^)]*\)[^{]*)', func_signature)
+        sig_match = re.match(r'(define\s+(?:dso_local\s+)?(?:\w+\s+)*@\w+\([^)]*\)[^{]*)', func_signature)
         if sig_match:
             signature = sig_match.group(1)
             # Convert 'define' to 'declare' and strip attributes to create a declaration
             # Remove everything after the closing paren and attributes reference
             decl_match = re.match(r'define\s+(?:dso_local\s+)?(.*?@\w+\([^)]*\))', signature)
             if decl_match:
-                declaration = f"declare {decl_match.group(1)}"
+                body = decl_match.group(1)
+                # LLVM forbids linkage keywords on `declare` (those only apply
+                # to definitions). Strip them so patterns like
+                # `define internal void @foo(...)` become
+                # `declare void @foo(...)` instead of
+                # `declare internal void @foo(...)` (an LLVM parse error).
+                body = re.sub(
+                    r'^(?:private|internal|available_externally|linkonce(?:_odr)?'
+                    r'|weak(?:_odr)?|common|appending|extern_weak|external)\s+',
+                    '',
+                    body,
+                )
+                declaration = f"declare {body}"
                 local_function_decls_map[func_name] = declaration
 
     suffix = (
