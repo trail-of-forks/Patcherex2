@@ -248,8 +248,16 @@ class InsertFunctionPatch(Patch):
                 mem_addr = self.detour_pos
                 file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
             p.sypy_info["patcherex_added_functions"].append(hex(mem_addr))
-            p.symbols[self.name] = mem_addr
-            print(f"InsertFunctionPatch: allocated '{self.name}' at {hex(mem_addr)}")
+            # Register the symbol with the Thumb bit set when the inserted
+            # function is Thumb-mode. The LLVMRecompArm post-link fixup pass
+            # (LLVMRecompArm.compile) detects Thumb-to-Thumb calls by checking
+            # whether `target + 1` is in `p.symbols.values()`. Without the
+            # Thumb bit here, a Thumb caller's BLX to this function is left as
+            # BLX (which switches to ARM mode) and faults on Cortex-M.
+            symbol_value = mem_addr | 1 if self.is_thumb else mem_addr
+            p.symbols[self.name] = symbol_value
+            print(f"InsertFunctionPatch: allocated '{self.name}' at {hex(mem_addr)} "
+                  f"(symbol value {hex(symbol_value)}, is_thumb={self.is_thumb})")
             p.binfmt_tool.update_binary_content(
                 file_addr,
                 p.compiler.compile(

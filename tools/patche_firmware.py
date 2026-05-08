@@ -350,6 +350,31 @@ def patch_binary(binary_name: str, function_mapping: dict[str, str], new_func_fi
 
         # Add InsertFunctionPatch first - they will be applied before ModifyFunctionPatch
         # This ensures newly inserted functions are available as symbols when modifying other functions
+        #
+        # Determine the target's predominant code mode by sampling an existing
+        # function (the first modify-patch target, or fallback to the entry
+        # point). On ARM Cortex-M the entire .text is Thumb-only — without this
+        # hint, InsertFunctionPatch defaults to is_thumb=False and the inserted
+        # function is compiled as ARM mode, producing bytes that fault the CPU
+        # the moment the call site branches into them. ModifyFunctionPatch
+        # already queries is_thumb per-function; mirror that here for inserts.
+        insert_is_thumb = False
+        try:
+            sample_addr = None
+            if modify_patches:
+                _orig0 = modify_patches[0][0]
+                _info = p.binary_analyzer.get_function(_orig0)
+                if _info and "addr" in _info:
+                    sample_addr = _info["addr"]
+            if sample_addr is None:
+                sample_addr = p.binary_analyzer.get_entry_point()
+            if sample_addr is not None:
+                insert_is_thumb = bool(p.binary_analyzer.is_thumb(sample_addr))
+                print(f"  Target ISA mode probe: is_thumb={insert_is_thumb} "
+                      f"(sample addr={hex(sample_addr)})")
+        except Exception as _exc:
+            print(f"  Warning: ISA-mode probe failed ({_exc}); defaulting to ARM mode")
+
         print("\nAdding InsertFunctionPatch instances (will be applied first)...")
         for original_func, patch_func, func_code, patch_symbols in insert_patches:
             print(f"  Preparing InsertFunctionPatch: {original_func} (new function)")
@@ -362,6 +387,7 @@ def patch_binary(binary_name: str, function_mapping: dict[str, str], new_func_fi
                     original_func,
                     func_code,
                     symbols=patch_symbols,
+                    is_thumb=insert_is_thumb,
                     compile_opts=insert_compile_opts
                 )
             )
