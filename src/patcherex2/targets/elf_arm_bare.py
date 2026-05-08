@@ -191,12 +191,20 @@ bne copy
         import logging
         logger = logging.getLogger(__name__)
 
-        for insert_point in self.insert_points:
-            # Use force_insert=True to bypass movability checks for firmware entry point patching
-            # This is needed because entry point code may contain PC-relative instructions
-            InsertInstructionPatch(insert_point, copy_to_ram, save_context=True, force_insert=True).apply(
-                self.p
-            )
+        # Only hook the firmware entry point when we actually have a flash->RAM
+        # copy to inject. With pure-flash inserts (e.g. patches whose globals
+        # already live in BSS that the firmware's existing crt0 zeros), the
+        # generated trampoline would degrade to `push {r0..fp}; pop {r0..fp};
+        # b.w continue`, which clobbers the entry point's first 4 bytes and
+        # discards the displaced original instructions (push/lr save, data
+        # init pointer load, ...) — silently breaking boot.
+        if copy_to_ram:
+            for insert_point in self.insert_points:
+                # Use force_insert=True to bypass movability checks for firmware entry point patching
+                # This is needed because entry point code may contain PC-relative instructions
+                InsertInstructionPatch(insert_point, copy_to_ram, save_context=True, force_insert=True).apply(
+                    self.p
+                )
         self.p.allocation_manager.finalize()
         # create new load segment for each new mapped block
         for block in self.p.allocation_manager.new_mapped_blocks:
