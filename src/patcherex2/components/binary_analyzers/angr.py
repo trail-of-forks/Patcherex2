@@ -7,12 +7,12 @@ from bisect import bisect_right
 import angr
 from archinfo import ArchARM
 
-from .binary_analyzer import BinaryAnalyzer, UnknownInstructionModeError
+from .binary_analyzer import UnknownInstructionModeError
 
 logger = logging.getLogger(__name__)
 
 
-class Angr(BinaryAnalyzer):
+class Angr:
     def __init__(self, binary_path: str, **kwargs) -> None:
         self.binary_path = binary_path
         # self.use_pickle = kwargs.pop("use_pickle", False) # TODO: implement this
