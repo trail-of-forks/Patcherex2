@@ -23,7 +23,12 @@ class GhidraAnalyzer(BinaryAnalyzer):
         self.temp_proj_dir_ctx = tempfile.TemporaryDirectory()
         self.temp_proj_dir = self.temp_proj_dir_ctx.__enter__()
 
-        self.pyghidra_ctx = pyghidra.open_program(binary_path, self.temp_proj_dir)
+        # Forwarded to pyghidra.open_program: `language` and `compiler` let a
+        # target override Ghidra's auto-detection, which picks the wrong
+        # processor variant for some binaries.
+        self.pyghidra_ctx = pyghidra.open_program(
+            binary_path, self.temp_proj_dir, **kwargs
+        )
         self.flatapi = self.pyghidra_ctx.__enter__()
         self.currentProgram = self.flatapi.getCurrentProgram()
 

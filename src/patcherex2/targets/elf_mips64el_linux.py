@@ -69,6 +69,11 @@ class ElfMips64elLinux(Target):
         if binary_analyzer == "angr":
             return AngrAnalyzer(self.binary_path, **kwargs)
         if binary_analyzer == "ghidra":
+            # Ghidra 12 auto-detects MIPS:LE:64:16e for these binaries, and
+            # then disassembles almost nothing: 16 instructions where the
+            # correct variant gives 227. Name the language rather than letting
+            # detection choose it.
+            kwargs.setdefault("language", "MIPS:LE:64:default")
             return GhidraAnalyzer(self.binary_path, **kwargs)
         raise NotImplementedError()
 
