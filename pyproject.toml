@@ -14,7 +14,8 @@ dependencies = [
     "lief",
     "keystone-engine",
     "intelhex",
-    "requests"
+    "requests",
+    "typing-extensions>=4.4; python_version < '3.12'"
 ]
 
 [project.optional-dependencies]

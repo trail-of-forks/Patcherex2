@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import bisect
 import logging
+import sys
 import traceback
 from typing import final
 
 import angr
 from archinfo import ArchARM
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 from .binary_analyzer import BinaryAnalyzer
 
@@ -26,16 +32,19 @@ class AngrAnalyzer(BinaryAnalyzer):
         self._mapping_symbols = None
 
     @property
+    @override
     def load_base(self) -> int:
         if self._load_base is None:
             self._load_base = self.p.loader.main_object.mapped_base
         return self._load_base
 
+    @override
     def normalize_addr(self, addr: int) -> int:
         if self.p.loader.main_object.pic:
             return addr - self.load_base
         return addr
 
+    @override
     def denormalize_addr(self, addr: int) -> int:
         if self.p.loader.main_object.pic:
             return addr + self.load_base
@@ -62,6 +71,7 @@ class AngrAnalyzer(BinaryAnalyzer):
             logger.info("Generated CFG with angr")
         return self._cfg
 
+    @override
     def mem_addr_to_file_offset(self, addr: int) -> int:
         addr = self.denormalize_addr(addr)
         file_addr = self.p.loader.main_object.addr_to_offset(addr)
@@ -72,6 +82,7 @@ class AngrAnalyzer(BinaryAnalyzer):
             return addr
         return file_addr
 
+    @override
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
         # NOTE: angr splits basic blocks at call instructions, so we need to handle this
         if self.is_thumb(addr) and addr % 2 == 0:
@@ -151,6 +162,7 @@ class AngrAnalyzer(BinaryAnalyzer):
 
         raise ValueError(f"Cannot find a block containing address {hex(addr)}")
 
+    @override
     def get_instr_bytes_at(self, addr: int, num_instr: int = 1) -> bytes | None:
         addr += 1 if self.is_thumb(addr) else 0
         addr = self.denormalize_addr(addr)
@@ -158,6 +170,7 @@ class AngrAnalyzer(BinaryAnalyzer):
         # angr will return both instrs, even when num_instr is 1
         return self.p.factory.block(addr, num_inst=num_instr).bytes
 
+    @override
     def get_unused_funcs(self) -> list[dict[str, int]]:
         logger.info("Getting unused functions with angr")
         unused_funcs = []
@@ -178,6 +191,7 @@ class AngrAnalyzer(BinaryAnalyzer):
                 )
         return unused_funcs
 
+    @override
     def get_all_symbols(self) -> dict[str, int]:
         assert self.cfg is not None
         logger.info("Getting all symbols with angr")
@@ -195,6 +209,7 @@ class AngrAnalyzer(BinaryAnalyzer):
             symbols[func.name] = self.normalize_addr(func.addr)
         return symbols
 
+    @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
         assert self.cfg is not None
         if isinstance(name_or_addr, (str, int)):
@@ -292,6 +307,7 @@ class AngrAnalyzer(BinaryAnalyzer):
 
         return self._thumb_from_mapping_symbols(loaded_addr)
 
+    @override
     def is_thumb(self, addr: int) -> bool:
         """
         Whether ``addr`` is Thumb, defaulting to ARM when undeterminable.

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from typing import final
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 from .binary_analyzer import BinaryAnalyzer
 
@@ -55,21 +61,25 @@ class IDAAnalyzer(BinaryAnalyzer):
             setattr(self, lib, self._headlessida.import_module(lib))
 
     @property
+    @override
     def load_base(self) -> int:
         if self._load_base is None:
             self._load_base = self.ida_nalt.get_imagebase()
         return self._load_base
 
+    @override
     def normalize_addr(self, addr: int) -> int:
         if self.ida_ida.inf_is_dll():
             return addr - self.load_base
         return addr
 
+    @override
     def denormalize_addr(self, addr: int) -> int:
         if self.ida_ida.inf_is_dll():
             return addr + self.load_base
         return addr
 
+    @override
     def mem_addr_to_file_offset(self, addr: int) -> int:
         file_type = self.ida_loader.get_file_type_name()
         if "intel hex" in file_type.lower():
@@ -77,6 +87,7 @@ class IDAAnalyzer(BinaryAnalyzer):
         file_offset = self.ida_loader.get_fileregion_offset(addr)
         return file_offset if file_offset != -1 else None
 
+    @override
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
         func = self.ida_funcs.get_func(addr)
         instr_addrs = list(func.code_items())
@@ -94,6 +105,7 @@ class IDAAnalyzer(BinaryAnalyzer):
                     ],
                 }
 
+    @override
     def get_instr_bytes_at(self, addr: int, num_instr: int = 1):
         total_bytes = b""
         current_addr = addr
@@ -103,6 +115,7 @@ class IDAAnalyzer(BinaryAnalyzer):
             current_addr += instr_len
         return total_bytes
 
+    @override
     def get_unused_funcs(self) -> list[dict[str, int]]:
         logger.info("Getting unused functions with IDA")
         unused_funcs = []
@@ -121,6 +134,7 @@ class IDAAnalyzer(BinaryAnalyzer):
                 )
         return unused_funcs
 
+    @override
     def get_all_symbols(self) -> dict[str, int]:
         logger.info("Getting all symbols with IDA")
         symbols = {}
@@ -136,6 +150,7 @@ class IDAAnalyzer(BinaryAnalyzer):
             symbols[name] = self.normalize_addr(addr)
         return symbols
 
+    @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
         if isinstance(name_or_addr, str):
             addr = self.ida_name.get_name_ea(self.ida_idaapi.BADADDR, name_or_addr)
@@ -151,5 +166,6 @@ class IDAAnalyzer(BinaryAnalyzer):
             "size": func.end_ea - func.start_ea,
         }
 
+    @override
     def is_thumb(self, addr: int) -> bool:
         return self.ida_segregs.get_sreg(addr, self.ida_idp.str2reg("T")) == 1
