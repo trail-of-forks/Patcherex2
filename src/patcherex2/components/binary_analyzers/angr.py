@@ -3,14 +3,18 @@ from __future__ import annotations
 import bisect
 import logging
 import traceback
+from typing import final
 
 import angr
 from archinfo import ArchARM
 
+from .binary_analyzer import BinaryAnalyzer
+
 logger = logging.getLogger(__name__)
 
 
-class Angr:
+@final
+class AngrAnalyzer(BinaryAnalyzer):
     def __init__(self, binary_path: str, **kwargs) -> None:
         self.binary_path = binary_path
         # self.use_pickle = kwargs.pop("use_pickle", False) # TODO: implement this
@@ -147,7 +151,7 @@ class Angr:
 
         raise ValueError(f"Cannot find a block containing address {hex(addr)}")
 
-    def get_instr_bytes_at(self, addr: int, num_instr=1) -> angr.Block:
+    def get_instr_bytes_at(self, addr: int, num_instr: int = 1) -> bytes | None:
         addr += 1 if self.is_thumb(addr) else 0
         addr = self.denormalize_addr(addr)
         # TODO: Special handling for delay slot, when there is a call instr with delay slot

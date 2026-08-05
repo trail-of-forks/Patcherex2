@@ -4,8 +4,8 @@ from ..components.allocation_managers.allocation_manager import AllocationManage
 from ..components.archinfo.riscv32 import Riscv32Info
 from ..components.assemblers.keystone import Keystone, keystone
 from ..components.assemblers.nyxstone import Nyxstone as NyxstoneAssembler
-from ..components.binary_analyzers.angr import Angr
-from ..components.binary_analyzers.ida import Ida
+from ..components.binary_analyzers.angr import AngrAnalyzer
+from ..components.binary_analyzers.ida import IDAAnalyzer
 from ..components.binfmt_tools.ihex import IHex
 from ..components.compilers.clang import Clang
 from ..components.disassemblers.capstone import Capstone, capstone
@@ -71,7 +71,7 @@ class IHexRiscv32Bare(Target):
     def get_binary_analyzer(self, binary_analyzer):
         binary_analyzer = binary_analyzer or "ida"
         if binary_analyzer == "angr":
-            return Angr(
+            return AngrAnalyzer(
                 self.binary_path,
                 angr_kwargs={
                     "arch": "riscv32",  # 32b unsupported?
@@ -83,7 +83,7 @@ class IHexRiscv32Bare(Target):
                 },
             )
         if binary_analyzer == "ida":
-            return Ida(self.binary_path, processor="riscv")
+            return IDAAnalyzer(self.binary_path, processor="riscv")
         raise NotImplementedError()
 
     def get_utils(self, utils):

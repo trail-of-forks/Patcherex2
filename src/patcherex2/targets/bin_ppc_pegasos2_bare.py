@@ -18,7 +18,7 @@ from ..components.allocation_managers.allocation_manager import (
 )
 from ..components.archinfo.ppc import PpcInfo
 from ..components.assemblers.keystone import Keystone, keystone
-from ..components.binary_analyzers.angr import Angr
+from ..components.binary_analyzers.angr import AngrAnalyzer
 from ..components.binfmt_tools.binary import Binary
 from ..components.compilers.clang import Clang
 from ..components.disassemblers.capstone import Capstone, capstone
@@ -176,7 +176,7 @@ class BinPpcPegasos2Bare(Target):
         entry_point = kwargs.pop("entry_point", _DEFAULT_ENTRY)
         binary_analyzer = binary_analyzer or "angr"
         if binary_analyzer == "angr":
-            return Angr(
+            return AngrAnalyzer(
                 self.binary_path,
                 angr_kwargs={
                     "main_opts": {
