@@ -1,9 +1,9 @@
 from ..components.allocation_managers.allocation_manager import AllocationManager
 from ..components.archinfo.arm import ArmInfo
 from ..components.assemblers.keystone_arm import KeystoneArm
-from ..components.binary_analyzers.angr import Angr
-from ..components.binary_analyzers.ghidra import Ghidra
-from ..components.binary_analyzers.ida import Ida
+from ..components.binary_analyzers.angr import AngrAnalyzer
+from ..components.binary_analyzers.ghidra import GhidraAnalyzer
+from ..components.binary_analyzers.ida import IDAAnalyzer
 from ..components.binfmt_tools.elf import ELF
 from ..components.compilers.clang_arm import ClangArm
 from ..components.disassemblers.capstone_arm import CapstoneArm
@@ -61,11 +61,11 @@ class ElfArmLinux(Target):
     def get_binary_analyzer(self, binary_analyzer, **kwargs):
         binary_analyzer = binary_analyzer or "angr"
         if binary_analyzer == "angr":
-            return Angr(self.binary_path, **kwargs)
+            return AngrAnalyzer(self.binary_path, **kwargs)
         if binary_analyzer == "ida":
-            return Ida(self.binary_path, **kwargs)
+            return IDAAnalyzer(self.binary_path, **kwargs)
         if binary_analyzer == "ghidra":
-            return Ghidra(self.binary_path, **kwargs)
+            return GhidraAnalyzer(self.binary_path, **kwargs)
         raise NotImplementedError()
 
     def get_utils(self, utils):

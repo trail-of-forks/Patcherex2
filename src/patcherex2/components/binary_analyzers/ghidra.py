@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from typing import final
 
 from .binary_analyzer import BinaryAnalyzer, UnknownInstructionModeError
 
 logger = logging.getLogger(__name__)
 
 
-class Ghidra(BinaryAnalyzer):
+@final
+class GhidraAnalyzer(BinaryAnalyzer):
     def __init__(self, binary_path: str, language: str | None = None, **kwargs):
         import pyghidra
 

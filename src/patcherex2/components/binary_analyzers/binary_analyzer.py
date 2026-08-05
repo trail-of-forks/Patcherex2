@@ -49,8 +49,11 @@ class BinaryAnalyzer(Protocol):
         ...
 
     @abstractmethod
-    def get_instr_bytes_at(self, addr: int, num_instr: int = 1) -> bytes:
-        """Return the raw bytes of ``num_instr`` instructions starting at ``addr``."""
+    def get_instr_bytes_at(self, addr: int, num_instr: int = 1) -> bytes | None:
+        """Return the raw bytes of ``num_instr`` instructions starting at ``addr``.
+
+        ``None`` is returned when no instruction is found at ``addr``.
+        """
         ...
 
     @abstractmethod

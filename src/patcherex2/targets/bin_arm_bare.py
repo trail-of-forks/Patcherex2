@@ -3,7 +3,7 @@ import logging
 from ..components.allocation_managers.allocation_manager import AllocationManager
 from ..components.archinfo.arm import ArmInfo
 from ..components.assemblers.keystone_arm import KeystoneArm
-from ..components.binary_analyzers.angr import Angr
+from ..components.binary_analyzers.angr import AngrAnalyzer
 from ..components.binfmt_tools.binary import Binary
 from ..components.compilers.clang_arm import ClangArm
 from ..components.disassemblers.capstone_arm import CapstoneArm
@@ -57,7 +57,7 @@ class BinArmBare(Target):
     def get_binary_analyzer(self, binary_analyzer):
         binary_analyzer = binary_analyzer or "angr"
         if binary_analyzer == "angr":
-            return Angr(
+            return AngrAnalyzer(
                 self.binary_path,
                 angr_kwargs={
                     "arch": "ARMEL",

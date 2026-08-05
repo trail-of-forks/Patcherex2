@@ -1,6 +1,6 @@
-from ..components.binary_analyzers.angr import Angr
-from ..components.binary_analyzers.ghidra import Ghidra
-from ..components.binary_analyzers.ida import Ida
+from ..components.binary_analyzers.angr import AngrAnalyzer
+from ..components.binary_analyzers.ghidra import GhidraAnalyzer
+from ..components.binary_analyzers.ida import IDAAnalyzer
 from ..components.compilers.llvm_recomp_arm import LLVMRecompArm
 from .elf_arm_linux import ElfArmLinux
 
@@ -21,9 +21,9 @@ class ElfArmLinuxRecomp(ElfArmLinux):
     def get_binary_analyzer(self, binary_analyzer, **kwargs):
         binary_analyzer = binary_analyzer or "angr"
         if binary_analyzer == "angr":
-            return Angr(self.binary_path, **kwargs)
+            return AngrAnalyzer(self.binary_path, **kwargs)
         if binary_analyzer == "ida":
-            return Ida(self.binary_path, **kwargs)
+            return IDAAnalyzer(self.binary_path, **kwargs)
         if binary_analyzer == "ghidra":
-            return Ghidra(self.binary_path, **kwargs)
+            return GhidraAnalyzer(self.binary_path, **kwargs)
         raise NotImplementedError()
