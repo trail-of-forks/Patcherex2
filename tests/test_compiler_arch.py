@@ -23,6 +23,7 @@ from patcherex2.targets import (
     ElfPpcLinux,
     ElfS390xLinux,
     ElfX86Linux,
+    Target,
 )
 
 bin_location = str(
@@ -115,6 +116,16 @@ class TestObjectArchCheck:
         assert target_cls.expected_object_arch, (
             f"{target_cls.__name__} declares no expected_object_arch, so a "
             f"wrong-architecture patch would be applied silently"
+        )
+
+    def test_every_registered_target_declares_expectation(self):
+        # Catches targets added later: without an expectation they fall back to
+        # the permissive default and lose the mismatch check entirely.
+        missing = sorted(
+            t.__name__ for t in Target.target_classes if not t.expected_object_arch
+        )
+        assert not missing, (
+            f"targets without expected_object_arch: {', '.join(missing)}"
         )
 
     @pytest.mark.parametrize("target_cls,binary", TARGETS)
