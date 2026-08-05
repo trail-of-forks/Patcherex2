@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ghidra = ["pyhidra"]
+ghidra = ["pyghidra"]
 ida = ["headless-ida"]
 all = ["patcherex2[ghidra]", "patcherex2[ida]"]
 
