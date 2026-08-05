@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import logging
 import traceback
 
@@ -18,6 +19,7 @@ class Angr:
         self._p = None
         self._cfg = None
         self._load_base = None
+        self._mapping_symbols = None
 
     @property
     def load_base(self) -> int:
@@ -206,16 +208,102 @@ class Angr:
         else:
             raise TypeError(f"Invalid type for name_or_addr: {type(name_or_addr)}")
 
-    def is_thumb(self, addr: int) -> bool:
+    @property
+    def _arm_mapping_symbols(self) -> tuple[list[int], list[str]]:
+        """
+        ARM ELF ``$a``/``$t``/``$d`` mapping symbols as parallel sorted lists of
+        addresses and kinds.
+
+        Each symbol marks the *start* of a region that runs until the next one
+        (they carry no size). They are present even where CFG recovery is
+        partial, which is what makes them useful as a fallback, but they are not
+        always complete -- see :meth:`thumb_mode` for why they do not override
+        the CFG.
+
+        Addresses are returned separately because bisect needs a bare key list.
+        """
+        if self._mapping_symbols is None:
+            symbols = sorted(
+                (sym.rebased_addr, sym.name)
+                for sym in self.p.loader.main_object.symbols
+                if sym.name in ("$a", "$t", "$d")
+            )
+            self._mapping_symbols = (
+                [sym_addr for sym_addr, _ in symbols],
+                [kind for _, kind in symbols],
+            )
+            logger.debug(f"Found {len(symbols)} ARM mapping symbols")
+        return self._mapping_symbols
+
+    def _thumb_from_mapping_symbols(self, addr: int) -> bool | None:
+        """
+        Instruction set at ``addr`` per the ELF mapping symbols, or None if they
+        do not cover it. ``addr`` is a denormalized (loaded) address.
+
+        A ``$d`` region is data, not code, so no instruction set applies and this
+        reports None rather than guessing.
+        """
+        addrs, kinds = self._arm_mapping_symbols
+        idx = bisect.bisect_right(addrs, addr) - 1
+        if idx < 0:
+            return None
+        if kinds[idx] == "$t":
+            return True
+        if kinds[idx] == "$a":
+            return False
+        return None
+
+    def thumb_mode(self, addr: int) -> bool | None:
+        """
+        Whether ``addr`` is Thumb, or None when it genuinely cannot be determined.
+
+        Unlike :meth:`is_thumb` this does not fall back to a guess, so a caller
+        that is able to refuse an address can tell "definitely ARM" apart from
+        "no idea".
+
+        The CFG is consulted first: where recovery succeeded it decoded actual
+        instructions, which is stronger evidence than a mapping symbol. Mapping
+        symbols are used only where the CFG has nothing, which is the case the
+        old fallback answered with a bare "ARM".
+
+        Note that mapping symbols alone are *not* reliable enough to override the
+        CFG: toolchains omit them. In ``printf_pie`` the ``$t`` at ``0x500``
+        covers Thumb ``frame_dummy`` but no ``$a`` marks ARM ``main`` at
+        ``0x504``, so the symbols imply Thumb for an ARM function.
+
+        :param addr: The address to query, in the same (normalized) convention
+            the other methods here take.
+        :return: True for Thumb, False for ARM, None if undeterminable.
+        """
         if not isinstance(self.p.arch, ArchARM):
             return False
-        addr = self.denormalize_addr(addr)
+        loaded_addr = self.denormalize_addr(addr)
 
-        for node in self.cfg.model.nodes():
-            if addr in node.instruction_addrs:
-                return node.thumb
-        if addr % 2 == 0:
-            return self.is_thumb(self.normalize_addr(addr + 1))
-        else:
-            logger.error(f"Cannot find a block containing address {hex(addr)}")
+        # Thumb instructions sit at odd addresses in angr's model, so an even
+        # address may be recorded either way; check both parities.
+        for candidate in (loaded_addr, loaded_addr | 1):
+            for node in self.cfg.model.nodes():
+                if candidate in node.instruction_addrs:
+                    return node.thumb
+
+        return self._thumb_from_mapping_symbols(loaded_addr)
+
+    def is_thumb(self, addr: int) -> bool:
+        """
+        Whether ``addr`` is Thumb, defaulting to ARM when undeterminable.
+
+        Prefer :meth:`thumb_mode` where an undeterminable address can be
+        refused: decoding Thumb bytes as ARM fuses two 16-bit instructions into
+        one, so a wrong answer here silently relocates instructions that do not
+        exist in the binary.
+        """
+        mode = self.thumb_mode(addr)
+        if mode is None:
+            logger.warning(
+                f"Cannot determine whether {hex(addr)} is ARM or Thumb: no "
+                f"mapping symbol or recovered basic block covers it. Assuming "
+                f"ARM, which will decode incorrectly if it is in fact Thumb. "
+                f"Use thumb_mode() to detect this case."
+            )
             return False
+        return mode
