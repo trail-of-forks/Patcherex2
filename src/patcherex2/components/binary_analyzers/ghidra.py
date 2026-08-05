@@ -33,10 +33,11 @@ class GhidraAnalyzer(BinaryAnalyzer):
         self.currentProgram = self.flatapi.getCurrentProgram()
 
         import ghidra
+        import ghidra.program.model.block
 
         self.ghidra = ghidra
 
-        self.bbm = self.ghidra.program.model.block.BasicBlockModel(self.currentProgram)
+        self.bbm = ghidra.program.model.block.BasicBlockModel(self.currentProgram)
 
     def shutdown(self):
         self.pyghidra_ctx.__exit__(None, None, None)
@@ -47,31 +48,33 @@ class GhidraAnalyzer(BinaryAnalyzer):
     def load_base(self) -> int:
         return self.currentProgram.getImageBase().getOffset()
 
-    # NOTE: Unlike the other backends, these two exchange Ghidra ``Address``
-    # objects rather than plain ints, so they do not match the signatures
-    # declared on BinaryAnalyzer. Reconciling that would change how addresses
-    # flow through this class; the annotations are left off deliberately so the
-    # divergence stays visible here rather than being asserted away.
     @override
-    def normalize_addr(self, addr):  # type: ignore[override]
-        addr = addr.getOffset()
+    def normalize_addr(self, addr: int) -> int:
         if self.currentProgram.getRelocationTable().isRelocatable():
             addr -= self.load_base
         return addr
 
     @override
-    def denormalize_addr(self, addr):  # type: ignore[override]
+    def denormalize_addr(self, addr: int) -> int:
         if self.currentProgram.getRelocationTable().isRelocatable():
             addr += self.load_base
-        return self.flatapi.toAddr(hex(addr))
+        return addr
+
+    def _normalize_ghidra_addr(self, addr) -> int:
+        """Normalize a Ghidra ``Address`` to a plain normalized int."""
+        return self.normalize_addr(addr.getOffset())
+
+    def _to_ghidra_addr(self, addr: int):
+        """Denormalize a normalized int into a Ghidra ``Address``."""
+        return self.flatapi.toAddr(hex(self.denormalize_addr(addr)))
 
     @override
     def mem_addr_to_file_offset(self, addr: int) -> int:
-        addr = self.denormalize_addr(addr)
+        ghidra_addr = self._to_ghidra_addr(addr)
         try:
             return (
                 self.currentProgram.getMemory()
-                .getAddressSourceInfo(addr)
+                .getAddressSourceInfo(ghidra_addr)
                 .getFileOffset()
             )
         except Exception:  # noqa: BLE001
@@ -79,37 +82,38 @@ class GhidraAnalyzer(BinaryAnalyzer):
 
     @override
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
-        logger.info(f"getting basic block at 0x{addr} with ghidra")
-        addr = self.denormalize_addr(addr)
+        logger.info(f"getting basic block at {hex(addr)} with ghidra")
+        ghidra_addr = self._to_ghidra_addr(addr)
 
         block = self.bbm.getFirstCodeBlockContaining(
-            addr, self.ghidra.util.task.TaskMonitor.DUMMY
+            ghidra_addr, self.ghidra.util.task.TaskMonitor.DUMMY
         )
         if block is None:
-            raise ValueError(f"Cannot find block containing address 0x{addr}")
+            raise ValueError(f"Cannot find block containing address {hex(addr)}")
         instrs = []
         ii = self.currentProgram.getListing().getInstructions(block, True)
         for i in ii:
-            instrs.append(self.normalize_addr(i.getAddress()))
+            instrs.append(self._normalize_ghidra_addr(i.getAddress()))
         return {
-            "start": self.normalize_addr(block.getMinAddress()),
-            "end": self.normalize_addr(block.getMinAddress()) + block.getNumAddresses(),
+            "start": self._normalize_ghidra_addr(block.getMinAddress()),
+            "end": self._normalize_ghidra_addr(block.getMinAddress())
+            + block.getNumAddresses(),
             "size": block.getNumAddresses(),
             "instruction_addrs": instrs,
         }
 
     @override
     def get_instr_bytes_at(self, addr: int, num_instr=1):
-        addr = self.denormalize_addr(addr)
-        instr = self.currentProgram.getListing().getInstructionContaining(addr)
+        ghidra_addr = self._to_ghidra_addr(addr)
+        instr = self.currentProgram.getListing().getInstructionContaining(ghidra_addr)
         if instr is None:
             return None
-        b = instr.getBytes()
+        b = bytes(instr.getBytes())
         for _i in range(1, num_instr):
             instr = instr.getNext()
-            b = b"".join([b, instr.getBytes()])
+            b = b"".join([b, bytes(instr.getBytes())])
         logger.info(
-            f"got instr bytes of length {len(b)} for {num_instr} instrs at 0x{addr} with ghidra"
+            f"got instr bytes of length {len(b)} for {num_instr} instrs at {hex(addr)} with ghidra"
         )
         return b
 
@@ -123,7 +127,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
                 b = f.getBody()
                 unused_funcs.append(
                     {
-                        "addr": self.normalize_addr(b.getMinAddress()),
+                        "addr": self._normalize_ghidra_addr(b.getMinAddress()),
                         "size": b.getNumAddresses(),
                     }
                 )
@@ -143,7 +147,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
         for f in fi:
             if f.getName() in symbols:
                 continue
-            symbols[f.getName()] = self.normalize_addr(f.getEntryPoint())
+            symbols[f.getName()] = self._normalize_ghidra_addr(f.getEntryPoint())
             if self.is_thumb(symbols[f.getName()]):
                 symbols[f.getName()] += 1
         return symbols
@@ -151,8 +155,9 @@ class GhidraAnalyzer(BinaryAnalyzer):
     @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
         if isinstance(name_or_addr, int):
-            name_or_addr = self.denormalize_addr(name_or_addr)
-            func = self.currentProgram.getListing().getFunctionContaining(name_or_addr)
+            func = self.currentProgram.getListing().getFunctionContaining(
+                self._to_ghidra_addr(name_or_addr)
+            )
             if func is None:
                 return None
         elif isinstance(name_or_addr, str):
@@ -165,17 +170,59 @@ class GhidraAnalyzer(BinaryAnalyzer):
 
         b = func.getBody()
         return {
-            "addr": self.normalize_addr(b.getMinAddress()),
+            "addr": self._normalize_ghidra_addr(b.getMinAddress()),
             "size": b.getNumAddresses(),
         }
 
-    @override
-    def is_thumb(self, addr: int) -> bool:
-        addr = self.denormalize_addr(addr)
+    def thumb_mode(self, addr: int) -> bool | None:
+        """
+        Whether ``addr`` is Thumb, or None when it genuinely cannot be determined.
+
+        Unlike :meth:`is_thumb` this does not fall back to a guess, so a caller
+        that is able to refuse an address can tell "definitely ARM" apart from
+        "no idea".
+
+        Ghidra tracks the instruction set in the ``TMode`` register context,
+        which it populates during disassembly. Where it has a value, that value
+        is an authoritative statement about the address; where it has none, the
+        address was never disassembled and no answer is available.
+
+        :param addr: The address to query, in the same (normalized) convention
+            the other methods here take.
+        :return: True for Thumb, False for ARM, None if undeterminable.
+        """
         r = self.currentProgram.getRegister("TMode")
         if r is None:
+            # No TMode register at all means a non-ARM architecture, where
+            # "not Thumb" is a definite answer rather than a missing one.
             return False
-        v = self.currentProgram.getProgramContext().getRegisterValue(r, addr)
+        v = self.currentProgram.getProgramContext().getRegisterValue(
+            r, self._to_ghidra_addr(addr)
+        )
+        if v is None or not v.hasValue():
+            logger.info(f"address {hex(addr)} has no TMode value in ghidra")
+            return None
         t = v.unsignedValueIgnoreMask.intValue() == 1
-        logger.info(f"address 0x{addr} {'is' if t else 'is not'} thumb from ghidra")
+        logger.info(f"address {hex(addr)} {'is' if t else 'is not'} thumb from ghidra")
         return t
+
+    @override
+    def is_thumb(self, addr: int) -> bool:
+        """
+        Whether ``addr`` is Thumb, defaulting to ARM when undeterminable.
+
+        Prefer :meth:`thumb_mode` where an undeterminable address can be
+        refused: decoding Thumb bytes as ARM fuses two 16-bit instructions into
+        one, so a wrong answer here silently relocates instructions that do not
+        exist in the binary.
+        """
+        mode = self.thumb_mode(addr)
+        if mode is None:
+            logger.warning(
+                f"Cannot determine whether {hex(addr)} is ARM or Thumb: ghidra "
+                f"has no TMode value for it. Assuming ARM, which will decode "
+                f"incorrectly if it is in fact Thumb. Use thumb_mode() to "
+                f"detect this case."
+            )
+            return False
+        return mode
