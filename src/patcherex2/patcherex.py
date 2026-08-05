@@ -88,7 +88,7 @@ class Patcherex:
 
     def shutdown(self):
         """
-        Required when using Ghidra (which spawns a JVM via pyhidra).
+        Required when using Ghidra (which spawns a JVM via pyghidra).
         Calls .shutdown() on every component that defines it.
         """
         for component in (
