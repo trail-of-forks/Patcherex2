@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from typing import final
+
+from .binary_analyzer import BinaryAnalyzer
 
 logger = logging.getLogger(__name__)
 
 
-class Ghidra:
+@final
+class GhidraAnalyzer(BinaryAnalyzer):
     def __init__(self, binary_path: str, **kwargs):
         import pyhidra
 
@@ -31,13 +35,18 @@ class Ghidra:
     def load_base(self) -> int:
         return self.currentProgram.getImageBase().getOffset()
 
-    def normalize_addr(self, addr):
+    # NOTE: Unlike the other backends, these two exchange Ghidra ``Address``
+    # objects rather than plain ints, so they do not match the signatures
+    # declared on BinaryAnalyzer. Reconciling that would change how addresses
+    # flow through this class; the annotations are left off deliberately so the
+    # divergence stays visible here rather than being asserted away.
+    def normalize_addr(self, addr):  # type: ignore[override]
         addr = addr.getOffset()
         if self.currentProgram.getRelocationTable().isRelocatable():
             addr -= self.load_base
         return addr
 
-    def denormalize_addr(self, addr):
+    def denormalize_addr(self, addr):  # type: ignore[override]
         if self.currentProgram.getRelocationTable().isRelocatable():
             addr += self.load_base
         return self.flatapi.toAddr(hex(addr))

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import final
+
+from .binary_analyzer import BinaryAnalyzer
 
 logger = logging.getLogger(__name__)
 
 
-class Ida:
+@final
+class IDAAnalyzer(BinaryAnalyzer):
     _DEFAULT_LOAD_BASE = 0x0
 
     def __init__(self, binary_path: str, **kwargs) -> None:

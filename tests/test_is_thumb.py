@@ -7,7 +7,7 @@ import os
 import pytest
 from elftools.elf.elffile import ELFFile
 
-from patcherex2.components.binary_analyzers.angr import Angr
+from patcherex2.components.binary_analyzers.angr import AngrAnalyzer
 
 bin_location = str(
     os.path.join(os.path.dirname(os.path.realpath(__file__)), "./test_binaries/armhf")
@@ -37,14 +37,14 @@ def thumb_regions(analyzer):
 
 @pytest.fixture(scope="module")
 def nopie():
-    a = Angr(os.path.join(bin_location, "printf_nopie"))
+    a = AngrAnalyzer(os.path.join(bin_location, "printf_nopie"))
     a.cfg  # force recovery
     return a
 
 
 @pytest.fixture(scope="module")
 def pie():
-    a = Angr(os.path.join(bin_location, "printf_pie"))
+    a = AngrAnalyzer(os.path.join(bin_location, "printf_pie"))
     a.cfg
     return a
 
@@ -130,7 +130,7 @@ class TestThumbMode:
         assert pie.is_thumb(main_norm) is False
 
     def test_non_arm_arch_is_never_thumb(self):
-        amd64 = Angr(os.path.join(bin_location, "..", "amd64", "printf_nopie"))
+        amd64 = AngrAnalyzer(os.path.join(bin_location, "..", "amd64", "printf_nopie"))
         assert amd64.is_thumb(0x401000) is False
         assert amd64.thumb_mode(0x401000) is False
 
@@ -140,7 +140,7 @@ def elf_thumb_regions(path):
     $t regions read straight from the ELF with pyelftools.
 
     Deliberately independent of the analyzer under test: a regression test that
-    sourced its ground truth from Angr._arm_mapping_symbols would still pass if
+    sourced its ground truth from AngrAnalyzer._arm_mapping_symbols would still pass if
     the lookup were reverted, since it would simply find no regions to check.
     """
     with open(path, "rb") as f:
@@ -173,7 +173,7 @@ class TestAgreementWithElf:
         regions = elf_thumb_regions(path)
         assert regions, f"{binary}: no $t regions found in the ELF"
 
-        a = Angr(path)
+        a = AngrAnalyzer(path)
         a.cfg
         covered = set()
         for node in a.cfg.model.nodes():
