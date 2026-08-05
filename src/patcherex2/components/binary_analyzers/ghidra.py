@@ -3,12 +3,10 @@ from __future__ import annotations
 import logging
 import tempfile
 
-from .binary_analyzer import BinaryAnalyzer
-
 logger = logging.getLogger(__name__)
 
 
-class Ghidra(BinaryAnalyzer):
+class Ghidra:
     def __init__(self, binary_path: str, **kwargs):
         import pyhidra
 
@@ -29,15 +27,19 @@ class Ghidra(BinaryAnalyzer):
         self.pyhidra_ctx.__exit__(None, None, None)
         self.temp_proj_dir_ctx.__exit__(None, None, None)
 
+    @property
+    def load_base(self) -> int:
+        return self.currentProgram.getImageBase().getOffset()
+
     def normalize_addr(self, addr):
         addr = addr.getOffset()
         if self.currentProgram.getRelocationTable().isRelocatable():
-            addr -= self.currentProgram.getImageBase().getOffset()
+            addr -= self.load_base
         return addr
 
     def denormalize_addr(self, addr):
         if self.currentProgram.getRelocationTable().isRelocatable():
-            addr += self.currentProgram.getImageBase().getOffset()
+            addr += self.load_base
         return self.flatapi.toAddr(hex(addr))
 
     def mem_addr_to_file_offset(self, addr: int) -> int:
