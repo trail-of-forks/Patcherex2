@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import logging
+import sys
 import tempfile
 from typing import final
 
 from .binary_analyzer import BinaryAnalyzer, UnknownInstructionModeError
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 logger = logging.getLogger(__name__)
 
@@ -80,15 +86,18 @@ class GhidraAnalyzer(BinaryAnalyzer):
                     if temp_proj_dir_ctx is not None:
                         temp_proj_dir_ctx.cleanup()
 
+    @override
     @property
     def load_base(self) -> int:
         return self.currentProgram.getImageBase().getOffset()
 
+    @override
     def normalize_addr(self, addr: int) -> int:
         if self.currentProgram.getRelocationTable().isRelocatable():
             addr -= self.load_base
         return addr
 
+    @override
     def denormalize_addr(self, addr: int) -> int:
         if self.currentProgram.getRelocationTable().isRelocatable():
             addr += self.load_base
@@ -100,6 +109,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
     def _to_ghidra_addr(self, addr: int):
         return self.flatapi.toAddr(hex(self.denormalize_addr(addr)))
 
+    @override
     def mem_addr_to_file_offset(self, addr: int) -> int:
         ghidra_addr = self._to_ghidra_addr(addr)
         try:
@@ -113,6 +123,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
                 f"Memory address {hex(addr)} is not mapped to the file"
             ) from None
 
+    @override
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
         logger.info(f"getting basic block at {hex(addr)} with ghidra")
         ghidra_addr = self._to_ghidra_addr(addr)
@@ -134,6 +145,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
             "instruction_addrs": instrs,
         }
 
+    @override
     def get_instr_bytes_at(self, addr: int, num_instr=1):
         ghidra_addr = self._to_ghidra_addr(addr)
         instr = self.currentProgram.getListing().getInstructionContaining(ghidra_addr)
@@ -149,6 +161,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
         )
         return b
 
+    @override
     def get_unused_funcs(self) -> list[dict[str, int]]:
         logger.info("getting unused funcs with ghidra")
         fi = self.currentProgram.getListing().getFunctions(True)
@@ -164,6 +177,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
                 )
         return unused_funcs
 
+    @override
     def get_all_symbols(self) -> dict[str, int]:
         logger.info("getting all symbols with ghidra")
         symbols = {}
@@ -195,6 +209,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
             symbols[f.getName()] = addr
         return symbols
 
+    @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
         if isinstance(name_or_addr, int):
             func = self.currentProgram.getListing().getFunctionContaining(
@@ -235,6 +250,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
         )
         return is_thumb
 
+    @override
     def is_thumb(self, addr: int) -> bool:
         mode = self.thumb_mode(addr)
         if mode is None:
