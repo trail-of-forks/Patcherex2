@@ -23,6 +23,7 @@ class ClangArm(Compiler):
         code: str,
         base=0,
         symbols: dict[str, int] | None = None,
+        extension: str = ".c",
         extra_compiler_flags: list[str] | None = None,
         is_thumb=False,
         **kwargs,
@@ -39,6 +40,7 @@ class ClangArm(Compiler):
             code,
             base=base,
             symbols=symbols,
+            extension=extension,
             extra_compiler_flags=extra_compiler_flags,
             **kwargs,
         )

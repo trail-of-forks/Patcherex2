@@ -160,16 +160,22 @@ class Compiler:
         code: str,
         base=0,
         symbols: dict[str, int] | None = None,
+        extension: str = ".c",
         extra_compiler_flags: list[str] | None = None,
         **kwargs,
     ) -> bytes:
+        """
+        :param extension: Source file extension, which is how clang decides how
+            to read ``code``. ``.c`` for C, ``.ll`` for LLVM IR.
+        """
         if symbols is None:
             symbols = {}
         if extra_compiler_flags is None:
             extra_compiler_flags = []
         with tempfile.TemporaryDirectory() as td:
             # source file
-            with open(os.path.join(td, "code.c"), "w") as f:
+            code_file = os.path.join(td, f"code{extension}")
+            with open(code_file, "w") as f:
                 f.write(code)
 
             # compile to object file
@@ -180,7 +186,7 @@ class Compiler:
                     + extra_compiler_flags
                     + [
                         "-c",
-                        os.path.join(td, "code.c"),
+                        code_file,
                         "-o",
                         os.path.join(td, "obj.o"),
                     ]

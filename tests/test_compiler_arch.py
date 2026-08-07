@@ -178,6 +178,49 @@ class TestCompiledObjectArch:
         assert compiler.compile(C_CODE)
 
 
+# Same function as C_CODE, as LLVM IR: add 1 to the argument and return it.
+LLVM_IR_CODE = """define i32 @f(i32 %x) {
+entry:
+  %r = add i32 %x, 1
+  ret i32 %r
+}
+"""
+
+
+class TestSourceExtension:
+    """
+    ``extension`` selects how clang reads the source, so a patch can be written
+    in LLVM IR instead of C. Patches reach it through ``compile_opts``.
+    """
+
+    def test_compiles_llvm_ir(self):
+        p = CompileOnlyPatcherex(
+            ElfAmd64Linux, os.path.join(bin_location, "amd64/printf_nopie")
+        )
+        compiler = p.target.get_compiler(None)
+        # mov eax, edi / add eax, 1 / ret
+        assert compiler.compile(LLVM_IR_CODE, extension=".ll") == bytes.fromhex(
+            "89f883c001c3"
+        )
+
+    def test_defaults_to_c(self):
+        p = CompileOnlyPatcherex(
+            ElfAmd64Linux, os.path.join(bin_location, "amd64/printf_nopie")
+        )
+        compiler = p.target.get_compiler(None)
+        assert compiler.compile(C_CODE)
+
+    def test_llvm_ir_rejected_as_c(self):
+        # Guards against extension being ignored: IR fed to the C frontend must
+        # not silently compile.
+        p = CompileOnlyPatcherex(
+            ElfAmd64Linux, os.path.join(bin_location, "amd64/printf_nopie")
+        )
+        compiler = p.target.get_compiler(None)
+        with pytest.raises(subprocess.CalledProcessError):
+            compiler.compile(LLVM_IR_CODE)
+
+
 # References an extern global, which is what makes the compiler choose between
 # materializing the address and loading it from the GOT.
 EXTERN_DATA_C_CODE = (
