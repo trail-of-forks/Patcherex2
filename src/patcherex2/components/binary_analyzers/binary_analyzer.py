@@ -59,7 +59,18 @@ class BinaryAnalyzer(Protocol):
 
     @abstractmethod
     def get_all_symbols(self) -> dict[str, int]:
-        """Return a mapping of function symbol name to normalized address."""
+        """Return a mapping of symbol name to normalized address.
+
+        Covers both code and data, so patch code can reference an existing
+        global by ``extern`` and have it resolve the same way an ``extern``
+        function does. Symbols with no address in this binary (imports,
+        undefined externals) are excluded, since defining one would give the
+        linker a bogus address.
+
+        On ARM the Thumb bit is set on function symbols that resolve to Thumb
+        code, making them branch targets; data addresses are never adjusted.
+        Where a function and a data symbol share a name, the function wins.
+        """
         ...
 
     @abstractmethod

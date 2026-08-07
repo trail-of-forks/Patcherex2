@@ -145,9 +145,13 @@ class IDAAnalyzer(BinaryAnalyzer):
             addr = self.ida_name.get_nlist_ea(symbol)
             if addr == self.ida_idaapi.BADADDR:
                 continue
-            if self.ida_funcs.get_func(addr) is None:
-                continue
-            symbols[name] = self.normalize_addr(addr)
+            address: int = self.normalize_addr(addr)
+            # Only code carries the Thumb bit. Setting it on a data symbol would
+            # hand out an address one byte past the datum.
+            if self.ida_funcs.get_func(addr) is not None and self.is_thumb(addr):
+                address += 1
+
+            symbols[name] = address
         return symbols
 
     @override

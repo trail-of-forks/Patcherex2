@@ -197,9 +197,24 @@ class AngrAnalyzer(BinaryAnalyzer):
         logger.info("Getting all symbols with angr")
         symbols = {}
         for symbol in self.p.loader.main_object.symbols:
-            if not symbol.name or not symbol.is_function:
+            if not symbol.name:
+                continue
+            # ARM mapping symbols ($a/$t/$d) mark instruction-set regions rather
+            # than named data or code, and several share a name, so they would
+            # collide in this flat namespace. _arm_mapping_symbols reads them
+            # directly for thumb_mode; they are not symbols a patch can reference.
+            if symbol.name in ("$a", "$t", "$d"):
+                continue
+            # Imports are resolved from another object at load time, so their
+            # address here is a PLT/GOT stub rather than the datum itself.
+            # Defining one in the linker script would point the patch at the
+            # stub. is_import is the discriminator; is_static/is_common are
+            # false for ordinary data symbols and cannot be used to select them.
+            if symbol.is_import or not symbol.rebased_addr:
                 continue
             symbols[symbol.name] = self.normalize_addr(symbol.rebased_addr)
+        # Functions are added after the symbol table so CFG-recovered entry
+        # points win on name collisions, as they did before data was included.
         for func in self.p.kb.functions.values():
             # make it compatible with old angr versions
             # Default to False rather than falling back to func.alignment: that
