@@ -171,7 +171,12 @@ class IDAAnalyzer(BinaryAnalyzer):
                 continue
             is_function = self.ida_funcs.get_func(addr) is not None
             if is_function:
-                symbols[name] = self.normalize_addr(addr)
+                address = self.normalize_addr(addr)
+                # Only code carries the Thumb bit. Setting it on a data symbol
+                # would hand out an address one byte past the datum.
+                if self.is_thumb(addr):
+                    address += 1
+                symbols[name] = address
                 continue
             segment = self.ida_segment.getseg(addr)
             if (

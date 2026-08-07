@@ -199,11 +199,19 @@ class AngrAnalyzer(BinaryAnalyzer):
             symbol_type = getattr(getattr(symbol, "type", None), "name", None)
             if not symbol.name or getattr(symbol, "is_common", False):
                 continue
+            # ARM mapping symbols ($a/$t/$d) mark instruction-set regions rather
+            # than named data or code, and several share a name, so they would
+            # collide in this flat namespace. _arm_mapping_symbols reads them
+            # directly for thumb_mode; they are not symbols a patch can reference.
+            if symbol.name in ("$a", "$t", "$d"):
+                continue
             if not symbol.is_function and (
                 getattr(symbol, "is_import", False) or symbol_type != "TYPE_OBJECT"
             ):
                 continue
             symbols[symbol.name] = self.normalize_addr(symbol.rebased_addr)
+        # Functions are added after the symbol table so CFG-recovered entry
+        # points win on name collisions, as they did before data was included.
         for func in self.p.kb.functions.values():
             # make it compatible with old angr versions
             # Default to False rather than falling back to func.alignment: that

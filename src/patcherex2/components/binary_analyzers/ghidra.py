@@ -113,11 +113,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
     def mem_addr_to_file_offset(self, addr: int) -> int:
         ghidra_addr = self._to_ghidra_addr(addr)
         try:
-            return (
-                self.currentProgram.getMemory()
-                .getAddressSourceInfo(ghidra_addr)
-                .getFileOffset()
-            )
+            return self.currentProgram.getMemory().getAddressSourceInfo(ghidra_addr).getFileOffset()
         except Exception:  # noqa: BLE001
             raise ValueError(
                 f"Memory address {hex(addr)} is not mapped to the file"
@@ -125,12 +121,14 @@ class GhidraAnalyzer(BinaryAnalyzer):
 
     @override
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
+        from ghidra.util.task import (
+            TaskMonitor,  # pyright: ignore[reportMissingModuleSource]
+        )
+
         logger.info(f"getting basic block at {hex(addr)} with ghidra")
         ghidra_addr = self._to_ghidra_addr(addr)
 
-        block = self.bbm.getFirstCodeBlockContaining(
-            ghidra_addr, self.ghidra.util.task.TaskMonitor.DUMMY
-        )
+        block = self.bbm.getFirstCodeBlockContaining(ghidra_addr, TaskMonitor.DUMMY)
         if block is None:
             raise ValueError(f"Cannot find block containing address {hex(addr)}")
         instrs = []
@@ -139,8 +137,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
             instrs.append(self._normalize_ghidra_addr(i.getAddress()))
         return {
             "start": self._normalize_ghidra_addr(block.getMinAddress()),
-            "end": self._normalize_ghidra_addr(block.getMinAddress())
-            + block.getNumAddresses(),
+            "end": self._normalize_ghidra_addr(block.getMinAddress()) + block.getNumAddresses(),
             "size": block.getNumAddresses(),
             "instruction_addrs": instrs,
         }
@@ -179,6 +176,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
 
     @override
     def get_all_symbols(self) -> dict[str, int]:
+
         logger.info("getting all symbols with ghidra")
         symbols = {}
         for symbol in self.currentProgram.getSymbolTable().getAllSymbols(False):
@@ -212,9 +210,7 @@ class GhidraAnalyzer(BinaryAnalyzer):
     @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
         if isinstance(name_or_addr, int):
-            func = self.currentProgram.getListing().getFunctionContaining(
-                self._to_ghidra_addr(name_or_addr)
-            )
+            func = self.currentProgram.getListing().getFunctionContaining(self._to_ghidra_addr(name_or_addr))
             if func is None:
                 return None
         elif isinstance(name_or_addr, str):
