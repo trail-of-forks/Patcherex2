@@ -211,7 +211,13 @@ class InsertFunctionPatch(Patch):
                 mem_addr = self.detour_pos
                 file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
             p.sypy_info["patcherex_added_functions"].append(hex(mem_addr))
-            p.symbols[self.name] = mem_addr
+            # Register a Thumb function with the Thumb bit set. The ARM post-link
+            # fixup passes (ClangArm.compile, LLVMRecompArm.compile) decide
+            # whether a call target is Thumb by testing `target + 1` against
+            # p.symbols.values(). Without the bit, a Thumb caller's BLX to this
+            # function is left as BLX, which switches to ARM mode and faults on
+            # a Thumb-only core such as Cortex-M.
+            p.symbols[self.name] = (mem_addr | 1) if self.is_thumb else mem_addr
             p.binfmt_tool.update_binary_content(
                 file_addr,
                 p.compiler.compile(
