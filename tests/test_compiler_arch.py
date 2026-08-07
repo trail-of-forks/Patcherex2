@@ -1,4 +1,5 @@
 import os
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -165,6 +166,72 @@ class TestCompiledObjectArch:
         path = os.path.join(BIN_LOCATION, binary)
         patcherex = CompileOnlyPatcherex(target_cls, path)
         assert patcherex.target.get_compiler(None).compile(C_CODE)
+        p = CompileOnlyPatcherex(target_cls, os.path.join(BIN_LOCATION, binary))
+        compiler = p.target.get_compiler(None)
+        # compile() runs check_object_arch internally, so a wrong-architecture
+        # object raises here rather than being returned as bytes.
+        assert compiler.compile(C_CODE)
+
+
+# Same function as C_CODE, as LLVM IR: add 1 to the argument and return it.
+LLVM_IR_CODE = """define i32 @f(i32 %x) {
+entry:
+  %r = add i32 %x, 1
+  ret i32 %r
+}
+"""
+
+
+class TestSourceExtension:
+    """
+    ``extension`` selects how clang reads the source, so a patch can be written
+    in LLVM IR instead of C. Patches reach it through ``compile_opts``.
+    """
+
+    def test_compiles_llvm_ir(self):
+        p = CompileOnlyPatcherex(
+            ElfAmd64Linux, os.path.join(BIN_LOCATION, "amd64/printf_nopie")
+        )
+        compiler = p.target.get_compiler(None)
+        # mov eax, edi / add eax, 1 / ret
+        assert compiler.compile(LLVM_IR_CODE, extension=".ll") == bytes.fromhex(
+            "89f883c001c3"
+        )
+
+    def test_defaults_to_c(self):
+        p = CompileOnlyPatcherex(
+            ElfAmd64Linux, os.path.join(BIN_LOCATION, "amd64/printf_nopie")
+        )
+        compiler = p.target.get_compiler(None)
+        assert compiler.compile(C_CODE)
+
+    def test_llvm_ir_rejected_as_c(self):
+        # Guards against extension being ignored: IR fed to the C frontend must
+        # not silently compile.
+        p = CompileOnlyPatcherex(
+            ElfAmd64Linux, os.path.join(BIN_LOCATION, "amd64/printf_nopie")
+        )
+        compiler = p.target.get_compiler(None)
+        with pytest.raises(subprocess.CalledProcessError):
+            compiler.compile(LLVM_IR_CODE)
+
+
+# References an extern global, which is what makes the compiler choose between
+# materializing the address and loading it from the GOT.
+EXTERN_DATA_C_CODE = (
+    "extern char g_auth_token[128];\nchar *f(void) { return g_auth_token; }\n"
+)
+
+# The address the linker script would define g_auth_token at, standing in for
+# a symbol read out of the target binary.
+EXTERN_DATA_SYMBOLS = {"g_auth_token": 0x404100}
+
+
+class NonPieTarget:
+    """Stands in for a non-PIE target, which is where the GOT check applies."""
+
+    def is_pie(self):
+        return False
 
     @pytest.mark.parametrize("target_cls,binary", RECOMP_TARGETS)
     def test_recomp_compiles_for_target_arch(self, target_cls, binary):

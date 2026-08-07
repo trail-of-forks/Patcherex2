@@ -159,9 +159,14 @@ class Compiler:
         code: str,
         base=0,
         symbols: dict[str, int] | None = None,
+        extension: str = ".c",
         extra_compiler_flags: list[str] | None = None,
         **kwargs,
     ) -> bytes:
+        """
+        :param extension: Source file extension, which is how clang decides how
+            to read ``code``. ``.c`` for C, ``.ll`` for LLVM IR.
+        """
         if symbols is None:
             symbols = {}
         if extra_compiler_flags is None:
@@ -173,12 +178,14 @@ class Compiler:
             + tuple(self.pic_compiler_flags())
             + tuple(extra_compiler_flags)
         )
-        object_key = (self._compiler, compiler_flags, code)
+        # `extension` selects the source language, so it must key the cache too:
+        # the same text compiled as C and as LLVM IR are different objects.
+        object_key = (self._compiler, compiler_flags, code, extension)
         with tempfile.TemporaryDirectory() as td:
             object_path = os.path.join(td, "obj.o")
             object_bytes = self._object_cache.get(object_key)
             if object_bytes is None:
-                source_path = os.path.join(td, "code.c")
+                source_path = os.path.join(td, f"code{extension}")
                 with open(source_path, "w") as f:
                     f.write(code)
                 try:

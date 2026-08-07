@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from patcherex2.components.binary_analyzers.angr import Angr
-from patcherex2.components.binary_analyzers.ida import Ida
+from patcherex2.components.binary_analyzers.angr import AngrAnalyzer
+from patcherex2.components.binary_analyzers.ida import IDAAnalyzer
 from patcherex2.components.compilers.compiler import UndefinedSymbolError
 from patcherex2.targets import ElfAmd64Linux
 
@@ -34,7 +34,7 @@ def make_compiler(symbols=None, binary_analyzer=None):
 
 
 def test_angr_exports_object_symbols():
-    analyzer = Angr(BINARY)
+    analyzer = AngrAnalyzer(BINARY)
 
     assert "_IO_stdin_used" in analyzer.get_all_symbols()
 
@@ -65,7 +65,7 @@ def test_angr_excludes_imported_and_common_objects():
         rebased_addr=0x401000,
     )
 
-    class FakeAngr(Angr):
+    class FakeAngr(AngrAnalyzer):
         @property
         def cfg(self):
             return object()
@@ -93,7 +93,7 @@ def test_ida_excludes_imported_data_but_keeps_functions_and_named_data():
         ("defined", 0x3000),
         ("code_label", 0x4000),
     ]
-    analyzer = Ida.__new__(Ida)
+    analyzer = IDAAnalyzer.__new__(IDAAnalyzer)
     analyzer.ida_name = SimpleNamespace(
         get_nlist_size=lambda: len(entries),
         get_nlist_name=lambda index: entries[index][0],
@@ -127,7 +127,7 @@ def test_ida_excludes_imported_data_but_keeps_functions_and_named_data():
 
 
 def test_compile_accepts_analyzer_object_symbol():
-    analyzer = Angr(BINARY)
+    analyzer = AngrAnalyzer(BINARY)
     compiler = make_compiler(binary_analyzer=analyzer)
 
     assert compiler.compile(

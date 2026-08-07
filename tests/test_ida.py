@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from patcherex2.components.binary_analyzers.ida import Ida
+from patcherex2.components.binary_analyzers.ida import IDAAnalyzer
 
 
 def test_unused_function_scan_iterates_function_indexes():
@@ -12,7 +12,7 @@ def test_unused_function_scan_iterates_function_indexes():
         None,
     ]
 
-    ida = Ida.__new__(Ida)
+    ida = IDAAnalyzer.__new__(IDAAnalyzer)
     ida.ida_funcs = SimpleNamespace(
         get_func_qty=lambda: len(functions),
         getn_func=lambda index: functions[index],
@@ -28,7 +28,7 @@ def test_unused_function_scan_iterates_function_indexes():
 def test_dll_addresses_are_denormalized_at_all_ida_boundaries():
     queried = []
     function = SimpleNamespace(code_items=lambda: [0x401000, 0x401004])
-    analyzer = Ida.__new__(Ida)
+    analyzer = IDAAnalyzer.__new__(IDAAnalyzer)
     analyzer._load_base = 0x400000
     analyzer.ida_ida = SimpleNamespace(inf_is_dll=lambda: True)
     analyzer.ida_loader = SimpleNamespace(
@@ -74,7 +74,7 @@ def test_dll_addresses_are_denormalized_at_all_ida_boundaries():
 
 
 def test_mem_addr_to_file_offset_rejects_unmapped_address():
-    analyzer = Ida.__new__(Ida)
+    analyzer = IDAAnalyzer.__new__(IDAAnalyzer)
     analyzer.ida_ida = SimpleNamespace(inf_is_dll=lambda: False)
     analyzer.ida_loader = SimpleNamespace(
         get_file_type_name=lambda: "ELF",

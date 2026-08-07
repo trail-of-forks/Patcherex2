@@ -6,7 +6,7 @@ import pytest
 from patcherex2.components.binary_analyzers.binary_analyzer import (
     UnknownInstructionModeError,
 )
-from patcherex2.components.binary_analyzers.ghidra import Ghidra
+from patcherex2.components.binary_analyzers.ghidra import GhidraAnalyzer
 
 
 class FakeAddress:
@@ -55,8 +55,10 @@ class FakeProgram:
         )
 
 
-def make_analyzer(register_value: int | None, relocatable: bool = True) -> Ghidra:
-    analyzer = Ghidra.__new__(Ghidra)
+def make_analyzer(
+    register_value: int | None, relocatable: bool = True
+) -> GhidraAnalyzer:
+    analyzer = GhidraAnalyzer.__new__(GhidraAnalyzer)
     analyzer.currentProgram = FakeProgram(register_value, relocatable)
     analyzer.flatapi = FakeFlatApi()
     return analyzer

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from archinfo import ArchARM, Endness
 
-from patcherex2.components.binary_analyzers.angr import Angr
+from patcherex2.components.binary_analyzers.angr import AngrAnalyzer
 from patcherex2.components.binary_analyzers.binary_analyzer import (
     UnknownInstructionModeError,
 )
@@ -23,13 +23,13 @@ class FakeNode:
 
 def make_analyzer(
     mapping_symbols: list[tuple[str, int]], cfg_nodes: list[tuple[int, bool]]
-) -> Angr:
+) -> AngrAnalyzer:
     main_object = SimpleNamespace(
         mapped_base=0,
         pic=False,
         symbols=[FakeSymbol(name, address) for name, address in mapping_symbols],
     )
-    analyzer = Angr.__new__(Angr)
+    analyzer = AngrAnalyzer.__new__(AngrAnalyzer)
     analyzer._p = SimpleNamespace(
         arch=ArchARM(Endness.LE),
         loader=SimpleNamespace(main_object=main_object),
