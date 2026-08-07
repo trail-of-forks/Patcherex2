@@ -152,10 +152,17 @@ strb r3, [r1], #1
 subs r2, r2, #1
 bne copy
 """
-        for insert_point in self.insert_points:
-            InsertInstructionPatch(insert_point, copy_to_ram, save_context=True).apply(
-                self.p
-            )
+        # Only hook the entry point when there is actually a flash->RAM copy to
+        # run. With no relocated block, copy_to_ram is empty and the generated
+        # trampoline degrades to `push {...}; pop {...}; b.w continue`, which
+        # still overwrites the entry point's first instructions and discards the
+        # displaced originals (lr save, data-init pointer load, ...), silently
+        # breaking boot.
+        if copy_to_ram:
+            for insert_point in self.insert_points:
+                InsertInstructionPatch(
+                    insert_point, copy_to_ram, save_context=True
+                ).apply(self.p)
         self.p.allocation_manager.finalize()
         # create new load segment for each new mapped block
         for block in self.p.allocation_manager.new_mapped_blocks:
