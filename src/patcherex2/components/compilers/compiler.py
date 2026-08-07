@@ -7,8 +7,10 @@ import subprocess
 import tempfile
 
 import cle
-from elftools.elf import enums
+from elftools.elf.descriptions import describe_reloc_type
 from elftools.elf.elffile import ELFFile
+from elftools.elf.relocation import RelocationSection
+from elftools.elf.sections import SymbolTableSection
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,51 @@ class UndefinedSymbolError(RuntimeError):
 
 class UnsupportedRelocationError(RuntimeError):
     """Raised when a patch uses a relocation incompatible with its target."""
+
+
+class IndirectSymbolReferenceError(Exception):
+    """
+    Raised when compiled patch code reaches a symbol through the GOT while the
+    linker script defines that symbol as an absolute address.
+
+    The linker script built by :meth:`Compiler.compile` defines every symbol
+    taken from the target as ``name = <addr>;``, i.e. the datum's own address.
+    A GOT-relative relocation against such a symbol instead treats ``<addr>``
+    as the address of a GOT slot and emits a load *from* it, so the patch
+    dereferences an address that was never meant to be dereferenced. Because
+    the final link is ``-relocatable``, the linker accepts this silently and
+    the fault only appears when the patched binary runs.
+    """
+
+
+#: Relocations that reach a symbol through the GOT rather than materializing
+#: its address. Compiling with ``-fno-pic`` (plus ``-mno-abicalls`` on MIPS)
+#: is what keeps these out of patch objects; this set is the backstop that
+#: catches a target whose flags do not.
+GOT_RELOCATIONS = frozenset(
+    {
+        "R_X86_64_GOTPCREL",
+        "R_X86_64_REX_GOTPCRELX",
+        "R_X86_64_GOTPCRELX",
+        "R_386_GOT32",
+        "R_386_GOT32X",
+        "R_ARM_GOT_BREL",
+        "R_ARM_GOT_PREL",
+        "R_AARCH64_ADR_GOT_PAGE",
+        "R_AARCH64_LD64_GOT_LO12_NC",
+        "R_MIPS_GOT16",
+        "R_MIPS_GOT_DISP",
+        "R_MIPS_GOT_PAGE",
+        "R_MIPS_GOT_OFST",
+        "R_MIPS_CALL16",
+        "R_PPC_GOT16",
+        "R_PPC64_GOT16",
+        "R_390_GOTENT",
+        "R_390_GOT32",
+        "R_390_GOT64",
+        "R_RISCV_GOT_HI20",
+    }
+)
 
 
 class Compiler:
@@ -154,6 +201,48 @@ class Compiler:
                 f"relocations: {details}"
             )
 
+    def check_got_relocations(self, elf: ELFFile, defined: dict[str, int]) -> None:
+        """
+        Verify no GOT-relative relocation targets a symbol we define absolutely.
+
+        On a position-independent target the GOT is how patch code is supposed
+        to reach data, so the check only applies to non-PIE binaries.
+
+        :param elf: The compiled object file, opened for reading.
+        :param defined: Symbols the linker script defines as absolute addresses.
+        :raises IndirectSymbolReferenceError: If any such relocation is found.
+        """
+        target = getattr(self.p, "target", None)
+        if target is None or target.is_pie():
+            return
+        offending = set()
+        for section in elf.iter_sections():
+            if not isinstance(section, RelocationSection):
+                continue
+            symtab = elf.get_section(section["sh_link"])
+            if not isinstance(symtab, SymbolTableSection):
+                continue
+            for reloc in section.iter_relocations():
+                reloc_type = describe_reloc_type(
+                    reloc["r_info_type"], elf
+                )  # e.g. "R_X86_64_REX_GOTPCRELX"
+                if reloc_type not in GOT_RELOCATIONS:
+                    continue
+                name = symtab.get_symbol(reloc["r_info_sym"]).name
+                if name in defined:
+                    offending.add(name)
+        if offending:
+            raise IndirectSymbolReferenceError(
+                f"Compiled patch code reaches {', '.join(sorted(offending))} through "
+                f"the GOT, but the patch is linked with those symbols defined as "
+                f"absolute addresses taken from the target binary. The patch would "
+                f"load from the symbol's address instead of using it, and fault at "
+                f"runtime. This usually means the compiler is emitting "
+                f"position-independent code; the target should pass -fno-pic "
+                f"(and -mno-abicalls on MIPS). Compiler flags: "
+                f"{getattr(self, '_compiler_flags', [])}"
+            )
+
     def compile(
         self,
         code: str,
@@ -219,6 +308,7 @@ class Compiler:
                 elf = ELFFile(f)
                 self.check_got_relocations(elf, set(_symbols))
                 self.check_object_arch(elf)
+                self.check_got_relocations(elf, _symbols)
                 linker_script_rodata_sections = " ".join(
                     [
                         f". = ALIGN({section['sh_addralign']}); *({section.name})"

@@ -41,7 +41,16 @@ class ElfMips64Linux(Target):
     def get_compiler(self, compiler):
         compiler = compiler or "clang"
         if compiler == "clang":
-            return Clang(self.p, compiler_flags=["--target=mips64-linux-gnuabi64"])
+            return Clang(
+                self.p,
+                compiler_flags=[
+                    "--target=mips64-linux-gnuabi64",
+                    # n64 keeps GOT-indirect data addressing under -fno-pic
+                    # alone; only -mno-abicalls yields absolute
+                    # HIGHEST/HIGHER/HI16/LO16.
+                    *self.pic_compiler_flags(extra=("-mno-abicalls",)),
+                ],
+            )
         raise NotImplementedError()
 
     def get_disassembler(self, disassembler):

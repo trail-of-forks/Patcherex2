@@ -37,11 +37,22 @@ class ElfArmLinux(Target):
     def get_compiler(self, compiler):
         compiler = compiler or "clang"
         if compiler == "clang":
-            return ClangArm(self.p, compiler_flags=["-target", "arm-linux-gnueabihf"])
+            return ClangArm(
+                self.p,
+                compiler_flags=[
+                    "-target",
+                    "arm-linux-gnueabihf",
+                    *self.pic_compiler_flags(),
+                ],
+            )
         elif compiler == "clang19":
             return ClangArm(
                 self.p,
-                compiler_flags=["-target", "arm-linux-gnueabihf"],
+                compiler_flags=[
+                    "-target",
+                    "arm-linux-gnueabihf",
+                    *self.pic_compiler_flags(),
+                ],
                 clang_version=19,
             )
         raise NotImplementedError()

@@ -6,6 +6,7 @@ from elftools.elf.elffile import ELFFile
 
 from patcherex2.components.compilers.compiler import (
     Compiler,
+    IndirectSymbolReferenceError,
     ObjectArchMismatchError,
     UnsupportedRelocationError,
 )

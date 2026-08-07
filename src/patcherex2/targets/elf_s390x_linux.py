@@ -58,7 +58,13 @@ class ElfS390xLinux(Target):
         if compiler == "clang":
             # NOTE: There are some issue with ld.lld in older versions of clang, use version >= 17
             return Clang(
-                self.p, compiler_flags=["-target", "s390x-linux-gnu"], clang_version=19
+                self.p,
+                compiler_flags=[
+                    "-target",
+                    "s390x-linux-gnu",
+                    *self.pic_compiler_flags(),
+                ],
+                clang_version=19,
             )
         raise NotImplementedError()
 

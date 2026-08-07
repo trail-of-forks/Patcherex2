@@ -41,7 +41,13 @@ class ElfMipselLinux(Target):
     def get_compiler(self, compiler):
         compiler = compiler or "clang"
         if compiler == "clang":
-            return Clang(self.p, compiler_flags=["--target=mipsel-linux-gnu"])
+            return Clang(
+                self.p,
+                compiler_flags=[
+                    "--target=mipsel-linux-gnu",
+                    *self.pic_compiler_flags(extra=("-mno-abicalls",)),
+                ],
+            )
         raise NotImplementedError()
 
     def get_disassembler(self, disassembler):
