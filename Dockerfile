@@ -8,13 +8,26 @@ RUN apt-get update && apt-get install -y \
     openjdk-21-jdk \
     clang-15 lld-15 \
     qemu-user \
-    gcc-multilib \
-    libc6-dev-armhf-cross libc6-dev-arm64-cross \
-    libc6-dev-mips-cross libc6-dev-mips64-cross \
-    libc6-dev-powerpc-cross libc6-dev-ppc64-cross \
-    libc6-dev-mipsel-cross libc6-dev-mips64el-cross \
-    libc6-dev-ppc64el-cross libc6-dev-s390x-cross \
+    libc6-armhf-cross libc6-arm64-cross \
+    libc6-mips-cross libc6-mips64-cross \
+    libc6-powerpc-cross libc6-powerpc-ppc64-cross \
+    libc6-mipsel-cross libc6-mips64el-cross \
+    libc6-ppc64el-cross libc6-s390x-cross \
     && rm -rf /var/lib/apt/lists/*
+
+# Architecture-specific build dependencies, so the image builds on an arm64
+# host (Apple silicon) as well as x86_64:
+#   gcc-multilib has no arm64 candidate, and is only needed to build 32-bit
+#     objects on x86_64.
+#   keystone-engine publishes no arm64 wheel, so pip builds it from the sdist
+#     and needs cmake.
+RUN apt-get update && \
+    if [ "$(uname -m)" = "x86_64" ]; then \
+        apt-get install -y gcc-multilib; \
+    else \
+        apt-get install -y cmake; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc \
     && echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" | tee /etc/apt/sources.list.d/llvm.list \
