@@ -77,7 +77,7 @@ class Tests:
             "printf_nopie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x10000528, "b {return_0x32}"),
+                ModifyInstructionPatch(0x10000528, "b <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -105,8 +105,8 @@ class Tests:
         instrs = """
             li 0, 0x4
             li 3, 0x1
-            lis 9, {added_data}@h
-            addi 4, 9, {added_data}@l
+            lis 9, <added_data>@h
+            addi 4, 9, <added_data>@l
             li 5, %s
             sc
         """ % hex(tlen)

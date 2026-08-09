@@ -71,12 +71,27 @@ Each tier features three patch types:
         - `num_bytes`: This is optional for `RemoveInstructionPatch` and `RemoveFunctionPatch`, but required for `RemoveDataPatch`, and specifies the number of bytes to be removed.
 
 ### Referencing previously inserted content.
+
+In patch assembly, `<name>` is replaced with the address of that symbol. The name
+may refer to content inserted by an earlier patch, to any symbol the binary
+analyzer found in the target, or to an entry you passed in `symbols=`.
+
+If a name has no known address, patcherex raises `UnresolvedSymbolError` naming
+it, rather than leaving the reference in the assembly.
+
+!!! warning "Deprecated: `{name}`"
+    Symbols used to be written `{name}`. That syntax still works but is
+    deprecated and warns, because braces are ambiguous with ARM register lists:
+    in `push {r7}` the braces are assembly, and a target with a symbol named
+    `r7` would have had the instruction silently rewritten. Angle brackets have
+    no such conflict. Use `<name>`.
+
 Examples:
 
 - This will load effective address of the data `my_data` into the `rsi` register.
     ```python
     InsertDataPatch("my_data", b"Hello, World!")
-    InsertInstructionPatch(0xDEADBEEF, "lea rsi, [{my_data}]")
+    InsertInstructionPatch(0xDEADBEEF, "lea rsi, [<my_data>]")
     ```
 - This will replace the content of function `foo` to call function `bar` and return the result.
     ```python

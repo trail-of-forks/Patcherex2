@@ -119,7 +119,7 @@ class Tests:
             "printf_nopie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x120000AC0, "j {return_0x32}"),
+                ModifyInstructionPatch(0x120000AC0, "j <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -134,7 +134,7 @@ class Tests:
             "printf_pie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0xB60, "j {return_0x32}"),
+                ModifyInstructionPatch(0xB60, "j <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -180,7 +180,7 @@ class Tests:
         instrs = """
             li $v0, 0x1389
             li $a0, 0x1
-            dla $a1, {added_data}
+            dla $a1, <added_data>
             li $a2, %s
             syscall
         """ % hex(tlen)
@@ -198,7 +198,7 @@ class Tests:
         instrs = """
             li $v0, 0x1389
             li $a0, 0x1
-            dla $a1, {added_data}
+            dla $a1, <added_data>
             li $a2, %s
             syscall
         """ % hex(tlen)

@@ -118,7 +118,7 @@ class Tests:
             "printf_nopie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x10000774, "b {return_0x32}"),
+                ModifyInstructionPatch(0x10000774, "b <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -133,7 +133,7 @@ class Tests:
             "printf_pie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0xA54, "b {return_0x32}"),
+                ModifyInstructionPatch(0xA54, "b <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -179,8 +179,8 @@ class Tests:
         instrs = """
             li 0, 0x4
             li 3, 0x1
-            lis 4, {added_data}@h
-            addi 4, 4, {added_data}@l
+            lis 4, <added_data>@h
+            addi 4, 4, <added_data>@l
             li 5, %s
             sc
         """ % hex(tlen)
@@ -198,8 +198,8 @@ class Tests:
         instrs = """
             li 0, 0x4
             li 3, 0x1
-            lis 4, {added_data}@h
-            addi 4, 4, {added_data}@l
+            lis 4, <added_data>@h
+            addi 4, 4, <added_data>@l
             li 5, %s
             sc
         """ % hex(tlen)

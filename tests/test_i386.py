@@ -134,7 +134,7 @@ class Tests:
             "printf_nopie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x80491A7, "jmp {return_0x32}"),
+                ModifyInstructionPatch(0x80491A7, "jmp <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -149,7 +149,7 @@ class Tests:
             "printf_pie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x11D2, "jmp {return_0x32}"),
+                ModifyInstructionPatch(0x11D2, "jmp <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -195,7 +195,7 @@ class Tests:
         instrs = """
             mov eax, 0x4
             mov ebx, 0x1
-            lea ecx, [{added_data}]
+            lea ecx, [<added_data>]
             mov edx, %s
             int 0x80
         """ % hex(tlen)
@@ -215,7 +215,7 @@ class Tests:
             mov ebx, 0x1
             lea edx, [here]
             here: and edx, 0xffff0000
-            lea ecx, [edx + {added_data}]
+            lea ecx, [edx + <added_data>]
             mov edx, %s
             int 0x80
         """ % hex(tlen)

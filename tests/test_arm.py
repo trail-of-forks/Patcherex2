@@ -124,7 +124,7 @@ class Tests:
             "printf_nopie",
             [
                 InsertInstructionPatch("return_0x32", instrs, is_thumb=True),
-                ModifyInstructionPatch(0x103EC, "b {return_0x32}"),
+                ModifyInstructionPatch(0x103EC, "b <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -140,7 +140,7 @@ class Tests:
             mov r0, pc
             ldr r1, =0xfff00000
             and r0, r0, r1
-            ldr r1, ={return_0x32}
+            ldr r1, =<return_0x32>
             add r0, r0, r1
             blx r0
         """
@@ -194,7 +194,7 @@ class Tests:
         instrs = """
             mov r7, 0x4
             mov r0, 0x1
-            ldr r1, ={added_data}
+            ldr r1, =<added_data>
             mov r2, %s
             svc 0
         """ % hex(tlen)
@@ -214,7 +214,7 @@ class Tests:
             mov r1, pc
             ldr r2, =0xfff00000
             and r1, r1, r2
-            ldr r2, ={added_data}
+            ldr r2, =<added_data>
             add r1, r1, r2
             mov r2, %s
             svc 0
