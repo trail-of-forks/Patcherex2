@@ -134,7 +134,7 @@ class Tests:
             "printf_nopie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x40115C, "jmp {return_0x32}"),
+                ModifyInstructionPatch(0x40115C, "jmp <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -149,7 +149,7 @@ class Tests:
             "printf_pie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x1164, "jmp {return_0x32}"),
+                ModifyInstructionPatch(0x1164, "jmp <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -195,7 +195,7 @@ class Tests:
         instrs = """
             mov rax, 1
             mov rdi, 1
-            lea rsi, [{added_data}]
+            lea rsi, [<added_data>]
             mov rdx, %s
             syscall
         """ % hex(tlen)
@@ -212,7 +212,7 @@ class Tests:
         instrs = """
             mov rax, 1
             mov rdi, 1
-            lea rsi, [{added_data}]
+            lea rsi, [<added_data>]
             mov rdx, %s
             syscall
         """ % hex(tlen)
@@ -298,7 +298,7 @@ class Tests:
         instrs = """
             mov rdi, rax
             add rdi, 3
-            call {puts}
+            call <puts>
         """
         self.run_one(
             "issue8",

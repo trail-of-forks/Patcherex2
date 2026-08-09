@@ -81,7 +81,7 @@ class Tests:
     def test_insert_instruction_patch_nopie(self):
         instrs = """
             larl %r2, 0x1000648
-            brasl %r14, {printf}
+            brasl %r14, <printf>
             larl %r2, 0x1000648
         """
         self.run_one(
@@ -94,7 +94,7 @@ class Tests:
     def test_insert_instruction_patch_pie(self):
         instrs = """
             larl %r2, 0x7e8
-            brasl %r14, {printf}
+            brasl %r14, <printf>
             larl %r2, 0x7e8
         """
         self.run_one(
@@ -113,7 +113,7 @@ class Tests:
             "printf_nopie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x10005FC, "j {return_0x32}"),
+                ModifyInstructionPatch(0x10005FC, "j <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -127,7 +127,7 @@ class Tests:
             "printf_pie",
             [
                 InsertInstructionPatch("return_0x32", instrs),
-                ModifyInstructionPatch(0x79C, "j {return_0x32}"),
+                ModifyInstructionPatch(0x79C, "j <return_0x32>"),
             ],
             expected_returnCode=0x32,
         )
@@ -171,8 +171,8 @@ class Tests:
     def test_insert_data_patch_nopie(self, tlen=5):
         p1 = InsertDataPatch("added_data", b"A" * tlen + b"\x00")
         instrs = """
-            larl %r2, {added_data}
-            brasl %r14, {printf}
+            larl %r2, <added_data>
+            brasl %r14, <printf>
             larl %r2, 0x1000648
         """
         p2 = InsertInstructionPatch(0x10005FC, instrs)
@@ -186,8 +186,8 @@ class Tests:
     def test_insert_data_patch_pie(self, tlen=5):
         p1 = InsertDataPatch("added_data", b"A" * tlen + b"\x00")
         instrs = """
-            larl %r2, {added_data}
-            brasl %r14, {printf}
+            larl %r2, <added_data>
+            brasl %r14, <printf>
             larl %r2, 0x7E8
         """
         p2 = InsertInstructionPatch(0x79C, instrs)
