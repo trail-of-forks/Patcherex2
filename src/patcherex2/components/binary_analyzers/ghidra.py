@@ -113,7 +113,11 @@ class GhidraAnalyzer(BinaryAnalyzer):
     def mem_addr_to_file_offset(self, addr: int) -> int:
         ghidra_addr = self._to_ghidra_addr(addr)
         try:
-            return self.currentProgram.getMemory().getAddressSourceInfo(ghidra_addr).getFileOffset()
+            return (
+                self.currentProgram.getMemory()
+                .getAddressSourceInfo(ghidra_addr)
+                .getFileOffset()
+            )
         except Exception:  # noqa: BLE001
             raise ValueError(
                 f"Memory address {hex(addr)} is not mapped to the file"
@@ -137,7 +141,8 @@ class GhidraAnalyzer(BinaryAnalyzer):
             instrs.append(self._normalize_ghidra_addr(i.getAddress()))
         return {
             "start": self._normalize_ghidra_addr(block.getMinAddress()),
-            "end": self._normalize_ghidra_addr(block.getMinAddress()) + block.getNumAddresses(),
+            "end": self._normalize_ghidra_addr(block.getMinAddress())
+            + block.getNumAddresses(),
             "size": block.getNumAddresses(),
             "instruction_addrs": instrs,
         }
@@ -195,13 +200,24 @@ class GhidraAnalyzer(BinaryAnalyzer):
                 is None
             ):
                 continue
-            symbols[symbol.getName()] = self._normalize_ghidra_addr(address)
+            normalized = self._normalize_ghidra_addr(address)
+            # Ghidra also labels the ELF file structures it parsed -- section
+            # headers, .symtab, .comment -- which live at file offsets rather
+            # than load addresses, so normalizing against the image base yields
+            # a negative address. They are not part of the loaded image and are
+            # not addressable by patch code, and emitting `name = -0x10000;`
+            # corrupts the linker script.
+            if normalized < 0:
+                continue
+            symbols[symbol.getName()] = normalized
         fi = self.currentProgram.getListing().getFunctions(True)
         for f in fi:
             # Preserve the first duplicate; the backend relies on its PLT ordering.
             if f.getName() in symbols:
                 continue
             addr = self._normalize_ghidra_addr(f.getEntryPoint())
+            if addr < 0:
+                continue
             if self.is_thumb(addr):
                 addr += 1
             symbols[f.getName()] = addr
@@ -210,7 +226,9 @@ class GhidraAnalyzer(BinaryAnalyzer):
     @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
         if isinstance(name_or_addr, int):
-            func = self.currentProgram.getListing().getFunctionContaining(self._to_ghidra_addr(name_or_addr))
+            func = self.currentProgram.getListing().getFunctionContaining(
+                self._to_ghidra_addr(name_or_addr)
+            )
             if func is None:
                 return None
         elif isinstance(name_or_addr, str):
