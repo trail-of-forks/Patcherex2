@@ -32,7 +32,9 @@ class GhidraAnalyzer(BinaryAnalyzer):
         # Forwarded to pyghidra.open_program: `language` and `compiler` let a
         # target override Ghidra's auto-detection, which picks the wrong
         # processor variant for some binaries.
-        self.pyghidra_ctx = pyghidra.open_program(binary_path, self.temp_proj_dir, **kwargs)
+        self.pyghidra_ctx = pyghidra.open_program(
+            binary_path, self.temp_proj_dir, **kwargs
+        )
         self.flatapi = self.pyghidra_ctx.__enter__()
         self.currentProgram = self.flatapi.getCurrentProgram()
 
@@ -73,7 +75,11 @@ class GhidraAnalyzer(BinaryAnalyzer):
     def mem_addr_to_file_offset(self, addr: int) -> int:
         ghidra_addr = self._to_ghidra_addr(addr)
         try:
-            return self.currentProgram.getMemory().getAddressSourceInfo(ghidra_addr).getFileOffset()
+            return (
+                self.currentProgram.getMemory()
+                .getAddressSourceInfo(ghidra_addr)
+                .getFileOffset()
+            )
         except Exception:  # noqa: BLE001
             raise ValueError("Can't get file offset for addr") from None
 
@@ -95,7 +101,8 @@ class GhidraAnalyzer(BinaryAnalyzer):
             instrs.append(self._normalize_ghidra_addr(i.getAddress()))
         return {
             "start": self._normalize_ghidra_addr(block.getMinAddress()),
-            "end": self._normalize_ghidra_addr(block.getMinAddress()) + block.getNumAddresses(),
+            "end": self._normalize_ghidra_addr(block.getMinAddress())
+            + block.getNumAddresses(),
             "size": block.getNumAddresses(),
             "instruction_addrs": instrs,
         }
@@ -110,7 +117,9 @@ class GhidraAnalyzer(BinaryAnalyzer):
         for _i in range(1, num_instr):
             instr = instr.getNext()
             b = b"".join([b, bytes(instr.getBytes())])
-        logger.info(f"got instr bytes of length {len(b)} for {num_instr} instrs at {hex(addr)} with ghidra")
+        logger.info(
+            f"got instr bytes of length {len(b)} for {num_instr} instrs at {hex(addr)} with ghidra"
+        )
         return b
 
     @override
@@ -142,7 +151,9 @@ class GhidraAnalyzer(BinaryAnalyzer):
         # External symbols live in Ghidra's synthetic EXTERNAL block rather than
         # in the binary, so their addresses are not real target addresses and
         # must not reach the linker script.
-        for s in filter(lambda s: s.isPrimary() and not s.isExternal(), cast(Iterable[Symbol], si)):
+        for s in filter(
+            lambda s: s.isPrimary() and not s.isExternal(), cast(Iterable[Symbol], si)
+        ):
             sym_addr = s.getAddress()
             if sym_addr is None or not sym_addr.isMemoryAddress():
                 continue
@@ -159,6 +170,14 @@ class GhidraAnalyzer(BinaryAnalyzer):
                 continue
 
             address: int = self._normalize_ghidra_addr(sym_addr)
+            # Ghidra also labels the ELF file structures it parsed -- section
+            # headers, .symtab, .comment -- which live at file offsets rather
+            # than load addresses, so normalizing against the image base yields
+            # a negative address. They are not part of the loaded image and are
+            # not addressable by patch code, and emitting `name = -0x10000;`
+            # corrupts the linker script.
+            if address < 0:
+                continue
             # Only code carries the Thumb bit. Setting it on a data symbol would
             # hand out an address one byte past the datum.
             if is_function and self.is_thumb(address):
@@ -170,7 +189,9 @@ class GhidraAnalyzer(BinaryAnalyzer):
     @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
         if isinstance(name_or_addr, int):
-            func = self.currentProgram.getListing().getFunctionContaining(self._to_ghidra_addr(name_or_addr))
+            func = self.currentProgram.getListing().getFunctionContaining(
+                self._to_ghidra_addr(name_or_addr)
+            )
             if func is None:
                 return None
         elif isinstance(name_or_addr, str):
@@ -209,7 +230,9 @@ class GhidraAnalyzer(BinaryAnalyzer):
             # No TMode register at all means a non-ARM architecture, where
             # "not Thumb" is a definite answer rather than a missing one.
             return False
-        v = self.currentProgram.getProgramContext().getRegisterValue(r, self._to_ghidra_addr(addr))
+        v = self.currentProgram.getProgramContext().getRegisterValue(
+            r, self._to_ghidra_addr(addr)
+        )
         if v is None or not v.hasValue():
             logger.info(f"address {hex(addr)} has no TMode value in ghidra")
             return None
