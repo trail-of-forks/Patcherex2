@@ -402,6 +402,13 @@ class TestPieDetection:
                 EXTERN_DATA_CODE, extra_compiler_flags=["-fPIC"]
             )
 
+    @pytest.mark.parametrize(
+        "target_cls,binary",
+        [
+            (ElfAmd64Linux, "amd64/replace_function_patch"),
+            (ElfArmLinux, "armhf/replace_function_patch"),
+        ],
+    )
     def test_pie_binaries_keep_pic(self, target_cls, binary):
         p = CompileOnlyPatcherex(target_cls, os.path.join(BIN_LOCATION, binary))
         assert p.target.is_pie()
@@ -452,6 +459,12 @@ class TestLinkerScriptNames:
     )
     def test_drops_generated_labels(self, name):
         assert Compiler.linker_script_symbols({name: 0x1000}) == {}
+
+    def test_drops_the_location_counter(self):
+        # `.` is the output position, not a name: assigning to it would move
+        # the section end rather than define anything, silently inflating the
+        # patch to wherever the address points.
+        assert Compiler.linker_script_symbols({".": 0x2000, "a": 0x1}) == {"a": 0x1}
 
     def test_one_bad_name_does_not_take_the_others(self):
         # The failure this guards against was total: the whole script was
