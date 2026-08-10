@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, cast, final
 
 if sys.version_info >= (3, 12):
@@ -12,6 +12,7 @@ else:
     from typing_extensions import override
 
 from .binary_analyzer import BinaryAnalyzer
+from .symbol import ExternalSymbol, MappedSymbol, Symbol
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ if TYPE_CHECKING:
 
 @final
 class GhidraAnalyzer(BinaryAnalyzer):
+    #: Synthetic block the analyzer appends past the end of the image to
+    #: anchor names whose definitions live elsewhere.
+    EXTERNAL_BLOCK = "EXTERNAL"
+
     def __init__(self, binary_path: str, **kwargs):
         import pyghidra
 
@@ -139,52 +144,55 @@ class GhidraAnalyzer(BinaryAnalyzer):
         return unused_funcs
 
     @override
-    def get_all_symbols(self) -> dict[str, int]:
+    def iter_symbols(self) -> Iterator[Symbol]:
         from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource]
-            Symbol,
+            Symbol as GhidraSymbol,
         )
 
         logger.info("getting all symbols with ghidra")
-        symbols: dict[str, int] = {}
         listing = self.currentProgram.getListing()
+        memory = self.currentProgram.getMemory()
         si = self.currentProgram.getSymbolTable().getAllSymbols(True)
-        # External symbols live in Ghidra's synthetic EXTERNAL block rather than
-        # in the binary, so their addresses are not real target addresses and
-        # must not reach the linker script.
-        for s in filter(
-            lambda s: s.isPrimary() and not s.isExternal(), cast(Iterable[Symbol], si)
-        ):
+        for s in filter(lambda s: s.isPrimary(), cast(Iterable[GhidraSymbol], si)):
+            name = s.getName()
             sym_addr = s.getAddress()
-            if sym_addr is None or not sym_addr.isMemoryAddress():
+            if sym_addr is None:
                 continue
 
-            name = s.getName()
-            # getFunctionAt rather than SymbolType.FUNCTION: it needs no extra
-            # ghidra submodule import, and it is the entry-point test we
-            # actually want, since only an entry point takes the Thumb bit.
-            is_function = listing.getFunctionAt(sym_addr) is not None
-            # Where a function and a data symbol share a name the function wins,
-            # so a patch referencing that name gets the entry point rather than
-            # whatever datum happens to share it.
-            if name in symbols and not is_function:
+            # Imports are anchored either outside the memory address space
+            # entirely or inside a synthetic block Ghidra appends past the end
+            # of the image. Both are placeholders, not locations.
+            block = memory.getBlock(sym_addr)
+            if not sym_addr.isMemoryAddress() or (
+                block is not None and block.getName() == self.EXTERNAL_BLOCK
+            ):
+                yield ExternalSymbol(name)
+                continue
+
+            # Ghidra labels some structures twice: once where the file holds
+            # them and once where they are loaded. Only the latter falls in a
+            # memory block, and only that one is a real address.
+            if block is None:
                 continue
 
             address: int = self._normalize_ghidra_addr(sym_addr)
-            # Ghidra also labels the ELF file structures it parsed -- section
-            # headers, .symtab, .comment -- which live at file offsets rather
-            # than load addresses, so normalizing against the image base yields
-            # a negative address. They are not part of the loaded image and are
-            # not addressable by patch code, and emitting `name = -0x10000;`
-            # corrupts the linker script.
+            # Ghidra labels the file structures it parsed as well as the loaded
+            # image. Those are at file offsets rather than addresses, so
+            # normalizing puts them below the image base; they are not part of
+            # what gets mapped and cannot be referenced.
             if address < 0:
                 continue
-            # Only code carries the Thumb bit. Setting it on a data symbol would
-            # hand out an address one byte past the datum.
-            if is_function and self.is_thumb(address):
-                address += 1
 
-            symbols[name] = address
-        return symbols
+            # getFunctionAt rather than the symbol's own type: it needs no extra
+            # ghidra submodule import, and an entry point is exactly what takes
+            # the instruction-set bit below.
+            function = listing.getFunctionAt(sym_addr)
+            if function is not None:
+                if self.is_thumb(address):
+                    address += 1
+                yield MappedSymbol(name, address, is_stub=bool(function.isThunk()))
+            else:
+                yield MappedSymbol(name, address)
 
     @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:

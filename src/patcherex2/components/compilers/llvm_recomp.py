@@ -148,7 +148,12 @@ class LLVMRecomp(Clang):
             # linker script
             _symbols = {}
             _symbols.update(self.p.symbols)
-            _symbols.update(self.p.binary_analyzer.get_all_symbols())
+            _symbols.update(
+                {
+                    name: symbol.addr
+                    for name, symbol in self.p.binary_analyzer.get_all_symbols().items()
+                }
+            )
             _symbols.update(symbols)
 
             with open(os.path.join(td, "obj.o"), "rb") as f:

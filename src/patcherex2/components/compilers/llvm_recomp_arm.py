@@ -36,7 +36,12 @@ class LLVMRecompArm(LLVMRecomp):
         # FIXME: damn this is too hacky
         _symbols = {}
         _symbols.update(self.p.symbols)
-        _symbols.update(self.p.binary_analyzer.get_all_symbols())
+        _symbols.update(
+            {
+                name: symbol.addr
+                for name, symbol in self.p.binary_analyzer.get_all_symbols().items()
+            }
+        )
         _symbols.update(symbols)
         symbols = _symbols
         disasm = self.p.disassembler.disassemble(compiled, base=base, is_thumb=is_thumb)

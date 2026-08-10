@@ -7,6 +7,7 @@ import subprocess
 import pytest
 from elftools.elf.elffile import ELFFile
 
+from patcherex2.components.binary_analyzers.symbol import MappedSymbol
 from patcherex2.components.compilers.compiler import (
     Compiler,
     IndirectSymbolReferenceError,
@@ -248,7 +249,9 @@ class SymbolAnalyzer:
     """Stands in for a binary analyzer that reports one known global."""
 
     def get_all_symbols(self):
-        return dict(EXTERN_DATA_SYMBOLS)
+        return {
+            name: MappedSymbol(name, addr) for name, addr in EXTERN_DATA_SYMBOLS.items()
+        }
 
 
 class ExternDataPatcherex(CompileOnlyPatcherex):

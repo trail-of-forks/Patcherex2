@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import logging
 from abc import abstractmethod
+from collections.abc import Iterator
 from typing import Protocol, runtime_checkable
+
+from .symbol import MappedSymbol, Symbol
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -58,20 +64,71 @@ class BinaryAnalyzer(Protocol):
         ...
 
     @abstractmethod
-    def get_all_symbols(self) -> dict[str, int]:
-        """Return a mapping of symbol name to normalized address.
+    def iter_symbols(self) -> Iterator[Symbol]:
+        """Yield every symbol the analyzer knows about, code and data alike.
 
-        Covers both code and data, so patch code can reference an existing
-        global by ``extern`` and have it resolve the same way an ``extern``
-        function does. Symbols with no address in this binary (imports,
-        undefined externals) are excluded, since defining one would give the
-        linker a bogus address.
+        This reports *facts*, not policy. A backend yields what it found and
+        does not decide what is usable, nor which of two same-named symbols
+        wins; that is settled once in :meth:`get_all_symbols` so backends
+        cannot drift from one another.
 
-        On ARM the Thumb bit is set on function symbols that resolve to Thumb
-        code, making them branch targets; data addresses are never adjusted.
-        Where a function and a data symbol share a name, the function wins.
+        Specifically, a backend should:
+
+        - yield data symbols as well as functions, so patch code can reference
+          an existing global by ``extern``;
+        - yield an :class:`ExternalSymbol` for anything whose definition lives
+          outside this binary, rather than passing on an address its own
+          analysis invented to anchor the name;
+        - mark a :class:`MappedSymbol` as a stub when its address is a
+          trampoline forwarding to the thing named;
+        - apply any instruction-set encoding to code addresses, so they are
+          usable branch targets, and never to data;
+        - report names verbatim, including ones no consumer can reference --
+          filtering those is the caller's job, via
+          :attr:`Symbol.is_asm_usable` and :attr:`Symbol.is_c_usable`.
         """
         ...
+
+    def get_all_symbols(self) -> dict[str, MappedSymbol]:
+        """Return the symbols a patch can resolve a reference to, by name.
+
+        Only :class:`MappedSymbol` appears: a name with no address cannot
+        resolve a reference, and offering one would hand out a placeholder.
+        The symbol itself is returned rather than just its address so a caller
+        can tell a trampoline from a definition.
+
+        A name may legitimately be reported more than once -- typically a
+        trampoline alongside what it forwards to. Where the addresses agree the
+        duplicate is redundant; where they differ, the non-stub wins, since
+        that is where the thing named actually lives. A name with two non-stub
+        addresses is genuinely ambiguous, so it is dropped rather than resolved
+        arbitrarily, and a patch referring to it will fail to resolve instead
+        of silently reaching the wrong one.
+        """
+        best: dict[str, MappedSymbol] = {}
+        ambiguous: set[str] = set()
+        for symbol in self.iter_symbols():
+            if not isinstance(symbol, MappedSymbol):
+                continue
+
+            if existing := best.get(symbol.name):
+                if not symbol.is_stub:
+                    if existing.is_stub:
+                        best[symbol.name] = symbol
+                    else:
+                        ambiguous.add(symbol.name)
+
+            else:
+                best[symbol.name] = symbol
+
+        for name in ambiguous:
+            logger.warning(
+                "symbol %r has more than one address and no way to choose "
+                "between them; patches cannot reference it by name",
+                name,
+            )
+            del best[name]
+        return best
 
     @abstractmethod
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
