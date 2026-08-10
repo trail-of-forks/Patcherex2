@@ -191,7 +191,8 @@ class LLVMRecomp(Clang):
                         except ValueError:
                             pass
             linker_script_symbols = "".join(
-                f"{name} = {hex(addr)};" for name, addr in _symbols.items()
+                f"{name} = {hex(addr)};"
+                for name, addr in self.linker_script_symbols(_symbols).items()
             )
 
             linker_script = f"SECTIONS {{ .patcherex2 : SUBALIGN(0) {{ . = {hex(base)}; *(.text) {linker_script_rodata_sections} {linker_script_symbols} }} }}"
