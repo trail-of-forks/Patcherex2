@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import tempfile
 
@@ -12,6 +13,15 @@ from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 
 logger = logging.getLogger(__name__)
+
+#: Names a linker script can carry on the left of an assignment.
+#:
+#: Wider than a C identifier -- ``.`` and ``$`` occur in real symbol names and
+#: the linker accepts them -- but narrower than "anything", because the linker
+#: tokenizes the name and may then try to parse part of it as a glob pattern.
+#: Analyzer-generated labels are what run into this; symbols the binary really
+#: named are already identifiers.
+LINKER_SCRIPT_NAME_RE = re.compile(r"^[A-Za-z_.$][A-Za-z0-9_.$]*$")
 
 
 class ObjectArchMismatchError(Exception):
@@ -68,6 +78,40 @@ GOT_RELOCATIONS = frozenset(
 
 
 class Compiler:
+    @staticmethod
+    def linker_script_symbols(symbols: dict[str, int]) -> dict[str, int]:
+        """
+        Drop symbols whose names a linker script cannot carry.
+
+        Analyzers name things the binary itself never named -- string contents,
+        struct and array members -- and those names are not identifiers. The
+        linker tokenizes the left side of an assignment and will try to read a
+        bracketed run as a glob character class, so a name like
+        ``s_[%s]_patient=%d_004022c7`` aborts the parse and takes the whole
+        script with it, including every valid symbol. That fails the link for
+        any patch, not just one referencing such a name.
+
+        The rule is narrower than "contains a bracket" -- ``ElfComment[0]``
+        parses fine -- but it depends on how the linker splits tokens, so this
+        keeps to names patch code could actually reference and drops the rest.
+
+        :param symbols: Merged symbols destined for the linker script.
+        """
+        usable, dropped = {}, []
+        for name, addr in symbols.items():
+            if LINKER_SCRIPT_NAME_RE.match(name):
+                usable[name] = addr
+            else:
+                dropped.append(name)
+        if dropped:
+            logger.debug(
+                "omitted %d symbol(s) from the linker script whose names it "
+                "cannot parse: %s",
+                len(dropped),
+                ", ".join(sorted(dropped)[:5]),
+            )
+        return usable
+
     def __init__(self, p) -> None:
         self.p = p
         # preserve_none is a special attribute flag to allow us to control more registers as input to a C function
@@ -206,6 +250,7 @@ class Compiler:
                 }
             )
             _symbols.update(symbols)
+            _symbols = self.linker_script_symbols(_symbols)
 
             # TODO: shouldn't put .rodata in .text, but otherwise switch case jump table won't work
             # Note that even we don't include .rodata here, cle might still include it if there is

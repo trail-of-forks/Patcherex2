@@ -356,3 +356,55 @@ class TestPieDetection:
         p = CompileOnlyPatcherex(target_cls, os.path.join(bin_location, binary))
         assert p.target.is_pie()
         assert "-fno-pic" not in p.target.get_compiler(None)._compiler_flags
+
+
+class TestLinkerScriptNames:
+    """
+    Analyzers name things the binary never named -- string contents, struct and
+    array members. Those names are not identifiers, and the linker tries to read
+    a bracketed run in one as a glob character class, which aborts the parse and
+    fails the link for *any* patch, not just one referencing such a name.
+    """
+
+    #: A real Ghidra label for a format string, and the shape that broke the
+    #: link: the bracket run is truncated by the ``%`` that follows it.
+    POISON = "s_[%s]_patient=%d_drug=%s_dose=%dm_004022c7"
+
+    def test_drops_names_the_linker_cannot_parse(self):
+        kept = Compiler.linker_script_symbols(
+            {"g_auth_token": 0x404100, self.POISON: 0x4022C7}
+        )
+        assert kept == {"g_auth_token": 0x404100}
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "g_auth_token",  # ordinary global
+            "check_auth",  # ordinary function
+            "completed.0",  # a dot is legal in a linker script
+            "$a",  # and so is a dollar
+            "_Z5addupIiET_S0_S0_",  # C++ arrives mangled, so it is an identifier
+        ],
+    )
+    def test_keeps_referenceable_names(self, name):
+        assert Compiler.linker_script_symbols({name: 0x1000}) == {name: 0x1000}
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "s_[%s]_patient=%d_004022c7",
+            "s_/var/log/medispense.log_004022ad",
+            "g_inventory[0].drug[63]",
+            "ElfComment[0]",
+            "main+1",
+            "s_check(10,_%d)_->_%d_00402004",
+        ],
+    )
+    def test_drops_generated_labels(self, name):
+        assert Compiler.linker_script_symbols({name: 0x1000}) == {}
+
+    def test_one_bad_name_does_not_take_the_others(self):
+        # The failure this guards against was total: the whole script was
+        # rejected, so every valid symbol was lost with the one bad one.
+        symbols = {"a": 0x1, self.POISON: 0x2, "b": 0x3}
+        assert Compiler.linker_script_symbols(symbols) == {"a": 0x1, "b": 0x3}
