@@ -21,7 +21,18 @@ logger = logging.getLogger(__name__)
 #: tokenizes the name and may then try to parse part of it as a glob pattern.
 #: Analyzer-generated labels are what run into this; symbols the binary really
 #: named are already identifiers.
+#:
+#: The pattern is deliberately stricter than what the linker would accept. Names
+#: it rejects that would in fact have linked -- ``main+1``, ``ElfComment[0]``,
+#: ``stdin@GLIBC_2.2.5`` -- are ones no patch could reference anyway, since none
+#: can be written in C or assembly, so nothing is lost by leaving them out.
 LINKER_SCRIPT_NAME_RE = re.compile(r"^[A-Za-z_.$][A-Za-z0-9_.$]*$")
+
+#: A bare ``.`` is the location counter, not a name. Assigning to it moves the
+#: output position rather than defining a symbol, which silently inflates the
+#: patch section to wherever the address points. No analyzer here produces it,
+#: but a caller can name a symbol anything through ``symbols=``.
+LOCATION_COUNTER = "."
 
 
 class ObjectArchMismatchError(Exception):
@@ -99,7 +110,7 @@ class Compiler:
         """
         usable, dropped = {}, []
         for name, addr in symbols.items():
-            if LINKER_SCRIPT_NAME_RE.match(name):
+            if name != LOCATION_COUNTER and LINKER_SCRIPT_NAME_RE.match(name):
                 usable[name] = addr
             else:
                 dropped.append(name)

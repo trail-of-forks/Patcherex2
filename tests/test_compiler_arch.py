@@ -403,6 +403,12 @@ class TestLinkerScriptNames:
     def test_drops_generated_labels(self, name):
         assert Compiler.linker_script_symbols({name: 0x1000}) == {}
 
+    def test_drops_the_location_counter(self):
+        # `.` is the output position, not a name: assigning to it would move
+        # the section end rather than define anything, silently inflating the
+        # patch to wherever the address points.
+        assert Compiler.linker_script_symbols({".": 0x2000, "a": 0x1}) == {"a": 0x1}
+
     def test_one_bad_name_does_not_take_the_others(self):
         # The failure this guards against was total: the whole script was
         # rejected, so every valid symbol was lost with the one bad one.
