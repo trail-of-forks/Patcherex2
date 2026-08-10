@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Iterator
 from typing import final
 
 from .binary_analyzer import BinaryAnalyzer
@@ -11,6 +12,8 @@ if sys.version_info >= (3, 12):
     from typing import override
 else:
     from typing_extensions import override
+
+from .symbol import ExternalSymbol, MappedSymbol, Symbol
 
 logger = logging.getLogger(__name__)
 
@@ -158,10 +161,8 @@ class IDAAnalyzer(BinaryAnalyzer):
         return import_names
 
     @override
-    def get_all_symbols(self) -> dict[str, int]:
+    def iter_symbols(self) -> Iterator[Symbol]:
         logger.info("Getting all symbols with IDA")
-        symbols = {}
-        import_names = self._get_import_names()
         for symbol in range(self.ida_name.get_nlist_size()):
             name = self.ida_name.get_nlist_name(symbol)
             if not name:
@@ -169,31 +170,26 @@ class IDAAnalyzer(BinaryAnalyzer):
             addr = self.ida_name.get_nlist_ea(symbol)
             if addr == self.ida_idaapi.BADADDR:
                 continue
-            is_function = self.ida_funcs.get_func(addr) is not None
-            if is_function:
-                address = self.normalize_addr(addr)
-                # Only code carries the Thumb bit. Setting it on a data symbol
-                # would hand out an address one byte past the datum.
+
+            # Imports live in a segment the analyzer synthesises to anchor names
+            # whose definitions come from elsewhere; those addresses are
+            # placeholders rather than locations.
+            segment = self.ida_segment.getseg(addr)
+            if segment is not None and segment.type == self.ida_segment.SEG_XTRN:
+                yield ExternalSymbol(name)
+                continue
+
+            address: int = self.normalize_addr(addr)
+            func = self.ida_funcs.get_func(addr)
+            if func is not None:
+                # Only an entry point takes the instruction-set bit; setting it
+                # on data would hand out an address one byte past the datum.
                 if self.is_thumb(addr):
                     address += 1
-                symbols[name] = address
-                continue
-            segment = self.ida_segment.getseg(addr)
-            if (
-                name in import_names
-                or segment is None
-                or segment.type == self.ida_segment.SEG_XTRN
-                or segment.perm & self.ida_segment.SEGPERM_EXEC
-                or not (
-                    segment.perm
-                    & (self.ida_segment.SEGPERM_READ | self.ida_segment.SEGPERM_WRITE)
-                )
-            ):
-                continue
-            if not self.ida_bytes.has_user_name(self.ida_bytes.get_full_flags(addr)):
-                continue
-            symbols[name] = self.normalize_addr(addr)
-        return symbols
+                is_stub = bool(func.flags & self.ida_funcs.FUNC_THUNK)
+                yield MappedSymbol(name, address, is_stub=is_stub)
+            else:
+                yield MappedSymbol(name, address)
 
     @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:

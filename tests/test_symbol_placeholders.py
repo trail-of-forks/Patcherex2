@@ -19,6 +19,7 @@ from patcherex2.components.assemblers.assembler import (
     Assembler,
     UnresolvedSymbolError,
 )
+from patcherex2.components.binary_analyzers.symbol import MappedSymbol
 
 keystone = pytest.importorskip("keystone", reason="keystone-engine not available")
 
@@ -35,7 +36,7 @@ SYMBOLS = {
 
 class _FakeBinaryAnalyzer:
     def get_all_symbols(self):
-        return dict(SYMBOLS)
+        return {name: MappedSymbol(name, addr) for name, addr in SYMBOLS.items()}
 
 
 class _FakePatcherex:

@@ -6,6 +6,7 @@ import pytest
 
 from patcherex2.components.binary_analyzers.angr import AngrAnalyzer
 from patcherex2.components.binary_analyzers.ida import IDAAnalyzer
+from patcherex2.components.binary_analyzers.symbol import MappedSymbol
 from patcherex2.components.compilers.compiler import UndefinedSymbolError
 from patcherex2.targets import ElfAmd64Linux
 
@@ -77,13 +78,15 @@ def test_angr_excludes_imported_and_common_objects():
     analyzer = FakeAngr.__new__(FakeAngr)
     analyzer._fake_p = SimpleNamespace(
         loader=SimpleNamespace(
-            main_object=SimpleNamespace(symbols=[imported, common, defined])
+            main_object=SimpleNamespace(
+                symbols=[imported, common, defined], plt={}, mapped_base=0
+            )
         ),
         kb=SimpleNamespace(functions={}),
     )
     analyzer.normalize_addr = lambda addr: addr
 
-    assert analyzer.get_all_symbols() == {"defined": 0x401000}
+    assert analyzer.get_all_symbols() == {"defined": MappedSymbol("defined", 0x401000)}
 
 
 def test_ida_excludes_imported_data_but_keeps_functions_and_named_data():
@@ -104,11 +107,18 @@ def test_ida_excludes_imported_data_but_keeps_functions_and_named_data():
         enum_import_names=lambda _module, callback: callback(0x1000, "imported", 1),
     )
     analyzer.ida_idaapi = SimpleNamespace(BADADDR=-1)
+    analyzer.ida_ida = SimpleNamespace(inf_is_dll=lambda: False)
+    # iter_symbols reads func.flags to flag thunks, so the fake needs one.
     analyzer.ida_funcs = SimpleNamespace(
-        get_func=lambda addr: object() if addr == 0x2000 else None
+        get_func=lambda addr: SimpleNamespace(flags=0) if addr == 0x4000 else None,
+        FUNC_THUNK=0x80,
     )
     analyzer.ida_segment = SimpleNamespace(
-        getseg=lambda _addr: SimpleNamespace(type=0, perm=4),
+        # Both `imported` entries live in the synthetic external segment, which
+        # is how iter_symbols now recognises an import.
+        getseg=lambda addr: SimpleNamespace(
+            type=1 if addr in (0x1000, 0x2000) else 0, perm=4
+        ),
         SEG_XTRN=1,
         SEGPERM_EXEC=1,
         SEGPERM_READ=4,
@@ -118,11 +128,16 @@ def test_ida_excludes_imported_data_but_keeps_functions_and_named_data():
         get_full_flags=lambda addr: addr,
         has_user_name=lambda flags: flags in (0x1000, 0x3000),
     )
+    # is_thumb() reads the T segment register via ida_segregs/ida_idp.
+    analyzer.ida_segregs = SimpleNamespace(get_sreg=lambda _addr, _reg: 0)
+    analyzer.ida_idp = SimpleNamespace(str2reg=lambda _name: 0)
     analyzer.normalize_addr = lambda addr: addr
 
+    # The import is reported as external (no address), so it does not appear;
+    # the defined datum and the code label both do.
     assert analyzer.get_all_symbols() == {
-        "imported": 0x2000,
-        "defined": 0x3000,
+        "defined": MappedSymbol("defined", 0x3000),
+        "code_label": MappedSymbol("code_label", 0x4000),
     }
 
 

@@ -215,7 +215,10 @@ class Compiler:
             _symbols = {}
             _symbols.update(self.p.symbols)
             if self._binary_symbols_cache is None:
-                self._binary_symbols_cache = self.p.binary_analyzer.get_all_symbols()
+                self._binary_symbols_cache = {
+                    name: symbol.addr
+                    for name, symbol in self.p.binary_analyzer.get_all_symbols().items()
+                }
             _symbols.update(self._binary_symbols_cache)
             _symbols.update(symbols)
 

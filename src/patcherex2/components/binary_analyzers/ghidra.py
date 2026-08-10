@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 import sys
 import tempfile
-from typing import final
+from collections.abc import Iterable, Iterator
+from typing import cast, final
 
 from .binary_analyzer import BinaryAnalyzer, UnknownInstructionModeError
 
@@ -12,11 +13,17 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from .symbol import ExternalSymbol, MappedSymbol, Symbol
+
 logger = logging.getLogger(__name__)
 
 
 @final
 class GhidraAnalyzer(BinaryAnalyzer):
+    #: Synthetic block the analyzer appends past the end of the image to
+    #: anchor names whose definitions live elsewhere.
+    EXTERNAL_BLOCK = "EXTERNAL"
+
     def __init__(self, binary_path: str, language: str | None = None, **kwargs):
         import pyghidra
 
@@ -180,48 +187,55 @@ class GhidraAnalyzer(BinaryAnalyzer):
         return unused_funcs
 
     @override
-    def get_all_symbols(self) -> dict[str, int]:
+    def iter_symbols(self) -> Iterator[Symbol]:
+        from ghidra.program.model.symbol import (  # pyright: ignore[reportMissingModuleSource]
+            Symbol as GhidraSymbol,
+        )
 
         logger.info("getting all symbols with ghidra")
-        symbols = {}
-        for symbol in self.currentProgram.getSymbolTable().getAllSymbols(False):
-            if not symbol.isPrimary():
+        listing = self.currentProgram.getListing()
+        memory = self.currentProgram.getMemory()
+        si = self.currentProgram.getSymbolTable().getAllSymbols(True)
+        for s in filter(lambda s: s.isPrimary(), cast(Iterable[GhidraSymbol], si)):
+            name = s.getName()
+            sym_addr = s.getAddress()
+            if sym_addr is None:
                 continue
-            if (
-                symbol.getSymbolType()
-                == self.ghidra.program.model.symbol.SymbolType.FUNCTION
+
+            # Imports are anchored either outside the memory address space
+            # entirely or inside a synthetic block Ghidra appends past the end
+            # of the image. Both are placeholders, not locations.
+            block = memory.getBlock(sym_addr)
+            if not sym_addr.isMemoryAddress() or (
+                block is not None and block.getName() == self.EXTERNAL_BLOCK
             ):
+                yield ExternalSymbol(name)
                 continue
-            address = symbol.getAddress()
-            if not address.isMemoryAddress() or not symbol.getName():
+
+            # Ghidra labels some structures twice: once where the file holds
+            # them and once where they are loaded. Only the latter falls in a
+            # memory block, and only that one is a real address.
+            if block is None:
                 continue
-            if (
-                self.currentProgram.getListing().getDefinedDataContaining(address)
-                is None
-            ):
+
+            address: int = self._normalize_ghidra_addr(sym_addr)
+            # Ghidra labels the file structures it parsed as well as the loaded
+            # image. Those are at file offsets rather than addresses, so
+            # normalizing puts them below the image base; they are not part of
+            # what gets mapped and cannot be referenced.
+            if address < 0:
                 continue
-            normalized = self._normalize_ghidra_addr(address)
-            # Ghidra also labels the ELF file structures it parsed -- section
-            # headers, .symtab, .comment -- which live at file offsets rather
-            # than load addresses, so normalizing against the image base yields
-            # a negative address. They are not part of the loaded image and are
-            # not addressable by patch code, and emitting `name = -0x10000;`
-            # corrupts the linker script.
-            if normalized < 0:
-                continue
-            symbols[symbol.getName()] = normalized
-        fi = self.currentProgram.getListing().getFunctions(True)
-        for f in fi:
-            # Preserve the first duplicate; the backend relies on its PLT ordering.
-            if f.getName() in symbols:
-                continue
-            addr = self._normalize_ghidra_addr(f.getEntryPoint())
-            if addr < 0:
-                continue
-            if self.is_thumb(addr):
-                addr += 1
-            symbols[f.getName()] = addr
-        return symbols
+
+            # getFunctionAt rather than the symbol's own type: it needs no extra
+            # ghidra submodule import, and an entry point is exactly what takes
+            # the instruction-set bit below.
+            function = listing.getFunctionAt(sym_addr)
+            if function is not None:
+                if self.is_thumb(address):
+                    address += 1
+                yield MappedSymbol(name, address, is_stub=bool(function.isThunk()))
+            else:
+                yield MappedSymbol(name, address)
 
     @override
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:

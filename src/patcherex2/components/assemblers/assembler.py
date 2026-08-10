@@ -61,7 +61,10 @@ class Assembler:
         if symbols is None:
             symbols = {}
         if not hasattr(self, "_binary_symbols_cache"):
-            self._binary_symbols_cache = self.p.binary_analyzer.get_all_symbols()
+            self._binary_symbols_cache = {
+                name: symbol.addr
+                for name, symbol in self.p.binary_analyzer.get_all_symbols().items()
+            }
         _symbols = {}
         _symbols.update(self.p.symbols)
         _symbols.update(self._binary_symbols_cache)
