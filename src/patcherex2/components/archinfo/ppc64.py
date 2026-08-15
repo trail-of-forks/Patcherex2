@@ -1,4 +1,9 @@
 class Ppc64Info:
+    elf_arch = {
+        "e_machine": "EM_PPC64",
+        "ei_class": "ELFCLASS64",
+        "ei_data": "ELFDATA2MSB",
+    }
     nop_bytes = b"\x60\x00\x00\x00"
     nop_size = 4
     jmp_asm = "b {dst}"
@@ -17,3 +22,11 @@ class Ppc64Info:
     lmw r3, 0x8(r1)
     addi r1, r1, 0x80
     """
+
+
+class Ppc64leInfo(Ppc64Info):
+    elf_arch = {
+        "e_machine": "EM_PPC64",
+        "ei_class": "ELFCLASS64",
+        "ei_data": "ELFDATA2LSB",
+    }

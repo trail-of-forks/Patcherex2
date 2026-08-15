@@ -1,4 +1,9 @@
 class Riscv32Info:
+    elf_arch = {
+        "e_machine": "EM_RISCV",
+        "ei_class": "ELFCLASS32",
+        "ei_data": "ELFDATA2LSB",
+    }
     nop_bytes = b"\x13\x00\x00\x00"
     nop_size = 4
     jmp_asm = "tail {dst}"  # pseudo-instruction

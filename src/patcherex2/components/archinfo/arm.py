@@ -1,4 +1,9 @@
 class ArmInfo:
+    elf_arch = {
+        "e_machine": "EM_ARM",
+        "ei_class": "ELFCLASS32",
+        "ei_data": "ELFDATA2LSB",
+    }
     nop_bytes = b"\x00\xf0\x20\xe3"  # TODO: thumb
     nop_size = 4
     jmp_asm = "b {dst}"

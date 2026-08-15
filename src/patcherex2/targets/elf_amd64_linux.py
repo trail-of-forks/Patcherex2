@@ -12,12 +12,6 @@ from .target import Target
 
 
 class ElfAmd64Linux(Target):
-    expected_object_arch = {
-        "e_machine": "EM_X86_64",
-        "ei_class": "ELFCLASS64",
-        "ei_data": "ELFDATA2LSB",
-    }
-
     @staticmethod
     def detect_target(binary_path):
         with open(binary_path, "rb") as f:

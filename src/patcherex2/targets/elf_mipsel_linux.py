@@ -1,5 +1,5 @@
 from ..components.allocation_managers.allocation_manager import AllocationManager
-from ..components.archinfo.mips import MipsInfo
+from ..components.archinfo.mips import MipselInfo
 from ..components.assemblers.keystone import Keystone, keystone
 from ..components.binary_analyzers.angr import Angr
 from ..components.binary_analyzers.ghidra import Ghidra
@@ -11,12 +11,6 @@ from .target import Target
 
 
 class ElfMipselLinux(Target):
-    expected_object_arch = {
-        "e_machine": "EM_MIPS",
-        "ei_class": "ELFCLASS32",
-        "ei_data": "ELFDATA2LSB",
-    }
-
     @staticmethod
     def detect_target(binary_path):
         with open(binary_path, "rb") as f:
@@ -81,5 +75,5 @@ class ElfMipselLinux(Target):
     def get_archinfo(self, archinfo):
         archinfo = archinfo or "default"
         if archinfo == "default":
-            return MipsInfo()
+            return MipselInfo()
         raise NotImplementedError()

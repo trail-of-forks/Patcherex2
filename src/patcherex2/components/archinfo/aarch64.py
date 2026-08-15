@@ -1,4 +1,9 @@
 class Aarch64Info:
+    elf_arch = {
+        "e_machine": "EM_AARCH64",
+        "ei_class": "ELFCLASS64",
+        "ei_data": "ELFDATA2LSB",
+    }
     nop_bytes = b"\x1f\x20\x03\xd5"
     nop_size = 4
     jmp_asm = "b {dst}"

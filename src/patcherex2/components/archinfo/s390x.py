@@ -1,4 +1,9 @@
 class S390xInfo:
+    elf_arch = {
+        "e_machine": "EM_S390",
+        "ei_class": "ELFCLASS64",
+        "ei_data": "ELFDATA2MSB",
+    }
     nop_bytes = b"\x07\x00"
     nop_size = 2
     jmp_asm = "jg {dst}"

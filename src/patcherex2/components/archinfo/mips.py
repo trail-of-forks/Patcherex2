@@ -1,4 +1,9 @@
 class MipsInfo:
+    elf_arch = {
+        "e_machine": "EM_MIPS",
+        "ei_class": "ELFCLASS32",
+        "ei_data": "ELFDATA2MSB",
+    }
     nop_bytes = b"\x00\x00\x00\x00"
     nop_size = 4
     jmp_asm = "j {dst}"
@@ -78,3 +83,11 @@ class MipsInfo:
     lw $ra, 120($sp)
     add $sp, $sp, 124
     """
+
+
+class MipselInfo(MipsInfo):
+    elf_arch = {
+        "e_machine": "EM_MIPS",
+        "ei_class": "ELFCLASS32",
+        "ei_data": "ELFDATA2LSB",
+    }

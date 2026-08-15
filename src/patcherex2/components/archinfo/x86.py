@@ -1,4 +1,9 @@
 class X86Info:
+    elf_arch = {
+        "e_machine": "EM_386",
+        "ei_class": "ELFCLASS32",
+        "ei_data": "ELFDATA2LSB",
+    }
     nop_bytes = b"\x90"
     nop_size = 1
     jmp_asm = "jmp {dst}"

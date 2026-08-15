@@ -1,5 +1,5 @@
 from ..components.allocation_managers.allocation_manager import AllocationManager
-from ..components.archinfo.ppc64 import Ppc64Info
+from ..components.archinfo.ppc64 import Ppc64leInfo
 from ..components.assemblers.keystone import Keystone, keystone
 from ..components.binary_analyzers.angr import Angr
 from ..components.binary_analyzers.ghidra import Ghidra
@@ -11,12 +11,6 @@ from .target import Target
 
 
 class ElfPpc64leLinux(Target):
-    expected_object_arch = {
-        "e_machine": "EM_PPC64",
-        "ei_class": "ELFCLASS64",
-        "ei_data": "ELFDATA2LSB",
-    }
-
     @staticmethod
     def detect_target(binary_path):
         with open(binary_path, "rb") as f:
@@ -84,5 +78,5 @@ class ElfPpc64leLinux(Target):
     def get_archinfo(self, archinfo):
         archinfo = archinfo or "default"
         if archinfo == "default":
-            return Ppc64Info()
+            return Ppc64leInfo()
         raise NotImplementedError()

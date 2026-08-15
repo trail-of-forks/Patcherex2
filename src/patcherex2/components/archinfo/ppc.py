@@ -1,4 +1,9 @@
 class PpcInfo:
+    elf_arch = {
+        "e_machine": "EM_PPC",
+        "ei_class": "ELFCLASS32",
+        "ei_data": "ELFDATA2MSB",
+    }
     nop_bytes = b"\x60\x00\x00\x00"
     nop_size = 4
     jmp_asm = "b {dst}"

@@ -1,4 +1,9 @@
 class Amd64Info:
+    elf_arch = {
+        "e_machine": "EM_X86_64",
+        "ei_class": "ELFCLASS64",
+        "ei_data": "ELFDATA2LSB",
+    }
     nop_bytes = b"\x90"
     nop_size = 1
     jmp_asm = "jmp {dst}"
