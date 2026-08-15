@@ -15,6 +15,10 @@ class ObjectArchMismatchError(RuntimeError):
     """Raised when compiled object code targets the wrong architecture."""
 
 
+class UndefinedSymbolError(RuntimeError):
+    """Raised when a linked patch object still references an undefined symbol."""
+
+
 class Compiler:
     def __init__(self, p) -> None:
         self.p = p
@@ -42,6 +46,35 @@ class Compiler:
             raise ObjectArchMismatchError(
                 f"Compiled patch code does not match the target architecture "
                 f"({details})"
+            )
+
+    def check_undefined_symbols(self, elf) -> None:
+        """Reject linked patch objects that still reference undefined symbols."""
+        symtab = elf.get_section_by_name(".symtab")
+        if symtab is None:
+            return
+
+        undefined = {
+            index: symbol.name
+            for index, symbol in enumerate(symtab.iter_symbols())
+            if symbol.name and symbol.entry.st_shndx == "SHN_UNDEF"
+        }
+        unresolved = set()
+        for section in elf.iter_sections():
+            if not hasattr(section, "iter_relocations"):
+                continue
+            linked_symtab = elf.get_section(section["sh_link"])
+            if linked_symtab is None or linked_symtab.name != symtab.name:
+                continue
+            for relocation in section.iter_relocations():
+                symbol_name = undefined.get(relocation.entry.r_info_sym)
+                if symbol_name is not None:
+                    unresolved.add(symbol_name)
+
+        if unresolved:
+            raise UndefinedSymbolError(
+                "Linked patch object references undefined symbols: "
+                + ", ".join(sorted(unresolved))
             )
 
     def compile(
@@ -120,6 +153,8 @@ class Compiler:
             except subprocess.CalledProcessError as e:
                 logger.error(e.stderr.decode("utf-8"))
                 raise
+            with open(os.path.join(td, "obj_linked.o"), "rb") as f:
+                self.check_undefined_symbols(ELFFile(f))
 
             # extract compiled code
             ld = cle.Loader(

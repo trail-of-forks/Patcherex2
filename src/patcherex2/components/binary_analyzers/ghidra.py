@@ -42,6 +42,7 @@ class Ghidra(BinaryAnalyzer):
 
             import ghidra
             import ghidra.program.model.block
+            import ghidra.program.model.symbol
 
             self.ghidra = ghidra
             self.bbm = ghidra.program.model.block.BasicBlockModel(self.currentProgram)
@@ -162,19 +163,32 @@ class Ghidra(BinaryAnalyzer):
     def get_all_symbols(self) -> dict[str, int]:
         logger.info("getting all symbols with ghidra")
         symbols = {}
-        # si = self.currentProgram.getSymbolTable().getAllSymbols(True)
-        # for s in si:
-        #     if not s.isPrimary():
-        #         continue
-        #     symbols[s.getName()] = self.normalize_addr(
-        #         s.getAddress().getOffset())
+        for symbol in self.currentProgram.getSymbolTable().getAllSymbols(False):
+            if not symbol.isPrimary():
+                continue
+            if (
+                symbol.getSymbolType()
+                == self.ghidra.program.model.symbol.SymbolType.FUNCTION
+            ):
+                continue
+            address = symbol.getAddress()
+            if not address.isMemoryAddress() or not symbol.getName():
+                continue
+            if (
+                self.currentProgram.getListing().getDefinedDataContaining(address)
+                is None
+            ):
+                continue
+            symbols[symbol.getName()] = self._normalize_ghidra_addr(address)
         fi = self.currentProgram.getListing().getFunctions(True)
         for f in fi:
+            # Preserve the first duplicate; the backend relies on its PLT ordering.
             if f.getName() in symbols:
                 continue
-            symbols[f.getName()] = self._normalize_ghidra_addr(f.getEntryPoint())
-            if self.is_thumb(symbols[f.getName()]):
-                symbols[f.getName()] += 1
+            addr = self._normalize_ghidra_addr(f.getEntryPoint())
+            if self.is_thumb(addr):
+                addr += 1
+            symbols[f.getName()] = addr
         return symbols
 
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:

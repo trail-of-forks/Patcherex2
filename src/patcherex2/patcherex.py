@@ -2,7 +2,21 @@ from __future__ import annotations
 
 import logging
 
-from .patches import *
+from .patches import (
+    InsertDataPatch,
+    InsertFunctionPatch,
+    InsertInstructionPatch,
+    InsertLabelPatch,
+    ModifyDataPatch,
+    ModifyFunctionPatch,
+    ModifyInstructionPatch,
+    ModifyLabelPatch,
+    ModifyRawBytesPatch,
+    RemoveDataPatch,
+    RemoveFunctionPatch,
+    RemoveInstructionPatch,
+    RemoveLabelPatch,
+)
 from .patches import __all__ as all_patches
 from .targets import Target
 

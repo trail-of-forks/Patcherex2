@@ -183,7 +183,12 @@ class Angr(BinaryAnalyzer):
         logger.info("Getting all symbols with angr")
         symbols = {}
         for symbol in self.p.loader.main_object.symbols:
-            if not symbol.name or not symbol.is_function:
+            symbol_type = getattr(getattr(symbol, "type", None), "name", None)
+            if not symbol.name or getattr(symbol, "is_common", False):
+                continue
+            if not symbol.is_function and (
+                getattr(symbol, "is_import", False) or symbol_type != "TYPE_OBJECT"
+            ):
                 continue
             symbols[symbol.name] = self.normalize_addr(symbol.rebased_addr)
         for func in self.p.kb.functions.values():

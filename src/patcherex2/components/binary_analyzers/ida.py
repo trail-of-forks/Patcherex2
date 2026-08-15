@@ -119,9 +119,22 @@ class Ida(BinaryAnalyzer):
                 )
         return unused_funcs
 
+    def _get_import_names(self) -> set[str]:
+        import_names = set()
+
+        def collect_import(_ea, name, _ordinal):
+            if name:
+                import_names.add(name)
+            return 1
+
+        for module in range(self.ida_nalt.get_import_module_qty()):
+            self.ida_nalt.enum_import_names(module, collect_import)
+        return import_names
+
     def get_all_symbols(self) -> dict[str, int]:
         logger.info("Getting all symbols with IDA")
         symbols = {}
+        import_names = self._get_import_names()
         for symbol in range(self.ida_name.get_nlist_size()):
             name = self.ida_name.get_nlist_name(symbol)
             if not name:
@@ -129,7 +142,23 @@ class Ida(BinaryAnalyzer):
             addr = self.ida_name.get_nlist_ea(symbol)
             if addr == self.ida_idaapi.BADADDR:
                 continue
-            if self.ida_funcs.get_func(addr) is None:
+            is_function = self.ida_funcs.get_func(addr) is not None
+            if is_function:
+                symbols[name] = self.normalize_addr(addr)
+                continue
+            segment = self.ida_segment.getseg(addr)
+            if (
+                name in import_names
+                or segment is None
+                or segment.type == self.ida_segment.SEG_XTRN
+                or segment.perm & self.ida_segment.SEGPERM_EXEC
+                or not (
+                    segment.perm
+                    & (self.ida_segment.SEGPERM_READ | self.ida_segment.SEGPERM_WRITE)
+                )
+            ):
+                continue
+            if not self.ida_bytes.has_user_name(self.ida_bytes.get_full_flags(addr)):
                 continue
             symbols[name] = self.normalize_addr(addr)
         return symbols

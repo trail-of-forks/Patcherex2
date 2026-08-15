@@ -198,6 +198,8 @@ class LLVMRecomp(Clang):
             except subprocess.CalledProcessError as e:
                 logger.error(e.stderr.decode("utf-8"))
                 raise
+            with open(os.path.join(td, "obj_linked.o"), "rb") as f:
+                self.check_undefined_symbols(ELFFile(f))
 
             # extract compiled code
             ld = cle.Loader(
