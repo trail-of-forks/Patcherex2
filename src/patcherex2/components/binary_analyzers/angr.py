@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import traceback
+from bisect import bisect_right
 
 import angr
 from archinfo import ArchARM
 
-from .binary_analyzer import BinaryAnalyzer
+from .binary_analyzer import BinaryAnalyzer, UnknownInstructionModeError
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class Angr(BinaryAnalyzer):
         self._p = None
         self._cfg = None
         self._load_base = None
+        self._mapping_symbols = None
 
     @property
     def load_base(self) -> int:
@@ -124,6 +126,8 @@ class Angr(BinaryAnalyzer):
                             for instr_addr in instr_addrs
                         ],
                     }
+        except UnknownInstructionModeError:
+            raise
         except Exception:  # noqa: BLE001
             logger.error(
                 f"angr RegionIdentifier failed for function containing {hex(addr)}, falling back to use cfg nodes\n{traceback.format_exc()}"
@@ -208,16 +212,60 @@ class Angr(BinaryAnalyzer):
         else:
             raise TypeError(f"Invalid type for name_or_addr: {type(name_or_addr)}")
 
-    def is_thumb(self, addr: int) -> bool:
+    @property
+    def mapping_symbols(self) -> list[tuple[int, str]]:
+        if self._mapping_symbols is None:
+            self._mapping_symbols = sorted(
+                (symbol.rebased_addr, symbol.name[:2])
+                for symbol in self.p.loader.main_object.symbols
+                if symbol.name and symbol.name[:2] in {"$a", "$d", "$t"}
+            )
+        return self._mapping_symbols
+
+    def _mapping_thumb_mode(self, addr: int) -> tuple[bool, bool | None]:
+        index = bisect_right(self.mapping_symbols, (addr, "\uffff")) - 1
+        if index < 0:
+            return False, None
+        _, kind = self.mapping_symbols[index]
+        if kind == "$t":
+            return True, True
+        if kind == "$a":
+            return True, False
+        return True, None
+
+    def _cfg_thumb_mode(self, addr: int) -> bool | None:
+        candidates = (addr, addr + 1) if addr % 2 == 0 else (addr,)
+        modes = {
+            node.thumb
+            for node in self.cfg.model.nodes()
+            if any(candidate in node.instruction_addrs for candidate in candidates)
+        }
+        if len(modes) != 1:
+            return None
+        return modes.pop()
+
+    def thumb_mode(self, addr: int) -> bool | None:
+        """Return the ARM instruction mode, or None when it is unknown."""
         if not isinstance(self.p.arch, ArchARM):
             return False
-        addr = self.denormalize_addr(addr)
 
-        for node in self.cfg.model.nodes():
-            if addr in node.instruction_addrs:
-                return node.thumb
-        if addr % 2 == 0:
-            return self.is_thumb(self.normalize_addr(addr + 1))
-        else:
-            logger.error(f"Cannot find a block containing address {hex(addr)}")
-            return False
+        addr = self.denormalize_addr(addr)
+        mapping_found, mapping_mode = self._mapping_thumb_mode(addr)
+        cfg_mode = self._cfg_thumb_mode(addr)
+
+        if not mapping_found:
+            return cfg_mode
+        if cfg_mode is None:
+            return mapping_mode
+        if mapping_mode is not None and mapping_mode == cfg_mode:
+            return mapping_mode
+        return None
+
+    def is_thumb(self, addr: int) -> bool:
+        mode = self.thumb_mode(addr)
+        if mode is None:
+            addr = self.denormalize_addr(addr)
+            raise UnknownInstructionModeError(
+                f"Cannot determine ARM instruction mode at {hex(addr)}"
+            )
+        return mode

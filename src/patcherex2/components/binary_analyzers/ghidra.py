@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import tempfile
 
-from .binary_analyzer import BinaryAnalyzer
+from .binary_analyzer import BinaryAnalyzer, UnknownInstructionModeError
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,10 @@ class Ghidra(BinaryAnalyzer):
             self.flatapi = FlatProgramAPI(self.currentProgram)
 
             import ghidra
+            import ghidra.program.model.block
 
             self.ghidra = ghidra
-            self.bbm = self.ghidra.program.model.block.BasicBlockModel(
-                self.currentProgram
-            )
+            self.bbm = ghidra.program.model.block.BasicBlockModel(self.currentProgram)
         except BaseException:
             self.shutdown()
             raise
@@ -78,59 +77,70 @@ class Ghidra(BinaryAnalyzer):
                     if temp_proj_dir_ctx is not None:
                         temp_proj_dir_ctx.cleanup()
 
-    def normalize_addr(self, addr):
-        addr = addr.getOffset()
+    @property
+    def load_base(self) -> int:
+        return self.currentProgram.getImageBase().getOffset()
+
+    def normalize_addr(self, addr: int) -> int:
         if self.currentProgram.getRelocationTable().isRelocatable():
-            addr -= self.currentProgram.getImageBase().getOffset()
+            addr -= self.load_base
         return addr
 
-    def denormalize_addr(self, addr):
+    def denormalize_addr(self, addr: int) -> int:
         if self.currentProgram.getRelocationTable().isRelocatable():
-            addr += self.currentProgram.getImageBase().getOffset()
-        return self.flatapi.toAddr(hex(addr))
+            addr += self.load_base
+        return addr
+
+    def _normalize_ghidra_addr(self, addr) -> int:
+        return self.normalize_addr(addr.getOffset())
+
+    def _to_ghidra_addr(self, addr: int):
+        return self.flatapi.toAddr(hex(self.denormalize_addr(addr)))
 
     def mem_addr_to_file_offset(self, addr: int) -> int:
-        addr = self.denormalize_addr(addr)
+        ghidra_addr = self._to_ghidra_addr(addr)
         try:
             return (
                 self.currentProgram.getMemory()
-                .getAddressSourceInfo(addr)
+                .getAddressSourceInfo(ghidra_addr)
                 .getFileOffset()
             )
         except Exception:  # noqa: BLE001
             raise ValueError("Can't get file offset for addr") from None
 
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
-        logger.info(f"getting basic block at 0x{addr} with ghidra")
-        addr = self.denormalize_addr(addr)
+        logger.info(f"getting basic block at {hex(addr)} with ghidra")
+        ghidra_addr = self._to_ghidra_addr(addr)
 
         block = self.bbm.getFirstCodeBlockContaining(
-            addr, self.ghidra.util.task.TaskMonitor.DUMMY
+            ghidra_addr, self.ghidra.util.task.TaskMonitor.DUMMY
         )
         if block is None:
-            raise ValueError(f"Cannot find block containing address 0x{addr}")
+            raise ValueError(f"Cannot find block containing address {hex(addr)}")
         instrs = []
         ii = self.currentProgram.getListing().getInstructions(block, True)
         for i in ii:
-            instrs.append(self.normalize_addr(i.getAddress()))
+            instrs.append(self._normalize_ghidra_addr(i.getAddress()))
         return {
-            "start": self.normalize_addr(block.getMinAddress()),
-            "end": self.normalize_addr(block.getMinAddress()) + block.getNumAddresses(),
+            "start": self._normalize_ghidra_addr(block.getMinAddress()),
+            "end": self._normalize_ghidra_addr(block.getMinAddress())
+            + block.getNumAddresses(),
             "size": block.getNumAddresses(),
             "instruction_addrs": instrs,
         }
 
     def get_instr_bytes_at(self, addr: int, num_instr=1):
-        addr = self.denormalize_addr(addr)
-        instr = self.currentProgram.getListing().getInstructionContaining(addr)
+        ghidra_addr = self._to_ghidra_addr(addr)
+        instr = self.currentProgram.getListing().getInstructionContaining(ghidra_addr)
         if instr is None:
             return None
-        b = instr.getBytes()
+        b = bytes(instr.getBytes())
         for _i in range(1, num_instr):
             instr = instr.getNext()
-            b = b"".join([b, instr.getBytes()])
+            b = b"".join([b, bytes(instr.getBytes())])
         logger.info(
-            f"got instr bytes of length {len(b)} for {num_instr} instrs at 0x{addr} with ghidra"
+            f"got instr bytes of length {len(b)} for {num_instr} instrs at "
+            f"{hex(addr)} with ghidra"
         )
         return b
 
@@ -143,7 +153,7 @@ class Ghidra(BinaryAnalyzer):
                 b = f.getBody()
                 unused_funcs.append(
                     {
-                        "addr": self.normalize_addr(b.getMinAddress()),
+                        "addr": self._normalize_ghidra_addr(b.getMinAddress()),
                         "size": b.getNumAddresses(),
                     }
                 )
@@ -162,15 +172,16 @@ class Ghidra(BinaryAnalyzer):
         for f in fi:
             if f.getName() in symbols:
                 continue
-            symbols[f.getName()] = self.normalize_addr(f.getEntryPoint())
+            symbols[f.getName()] = self._normalize_ghidra_addr(f.getEntryPoint())
             if self.is_thumb(symbols[f.getName()]):
                 symbols[f.getName()] += 1
         return symbols
 
     def get_function(self, name_or_addr: int | str) -> dict[str, int] | None:
         if isinstance(name_or_addr, int):
-            name_or_addr = self.denormalize_addr(name_or_addr)
-            func = self.currentProgram.getListing().getFunctionContaining(name_or_addr)
+            func = self.currentProgram.getListing().getFunctionContaining(
+                self._to_ghidra_addr(name_or_addr)
+            )
             if func is None:
                 return None
         elif isinstance(name_or_addr, str):
@@ -183,16 +194,33 @@ class Ghidra(BinaryAnalyzer):
 
         b = func.getBody()
         return {
-            "addr": self.normalize_addr(b.getMinAddress()),
+            "addr": self._normalize_ghidra_addr(b.getMinAddress()),
             "size": b.getNumAddresses(),
         }
 
-    def is_thumb(self, addr: int) -> bool:
-        addr = self.denormalize_addr(addr)
-        r = self.currentProgram.getRegister("TMode")
-        if r is None:
+    def thumb_mode(self, addr: int) -> bool | None:
+        """Return the Ghidra ARM mode, or None when it is unknown."""
+        register = self.currentProgram.getRegister("TMode")
+        if register is None:
             return False
-        v = self.currentProgram.getProgramContext().getRegisterValue(r, addr)
-        t = v.unsignedValueIgnoreMask.intValue() == 1
-        logger.info(f"address 0x{addr} {'is' if t else 'is not'} thumb from ghidra")
-        return t
+
+        value = self.currentProgram.getProgramContext().getRegisterValue(
+            register, self._to_ghidra_addr(addr)
+        )
+        if value is None or not value.hasValue():
+            logger.info(f"address {hex(addr)} has no TMode value in ghidra")
+            return None
+
+        is_thumb = value.unsignedValueIgnoreMask.intValue() == 1
+        logger.info(
+            f"address {hex(addr)} {'is' if is_thumb else 'is not'} thumb from ghidra"
+        )
+        return is_thumb
+
+    def is_thumb(self, addr: int) -> bool:
+        mode = self.thumb_mode(addr)
+        if mode is None:
+            raise UnknownInstructionModeError(
+                f"Cannot determine ARM instruction mode at {hex(addr)}"
+            )
+        return mode
