@@ -30,9 +30,9 @@ runs:
       shell: bash
       run: |
         cd $HOME
-        wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.0.3_build/ghidra_11.0.3_PUBLIC_20240410.zip
-        unzip ghidra_11.0.3_PUBLIC_20240410.zip
-        echo GHIDRA_INSTALL_DIR=$PWD/ghidra_11.0.3_PUBLIC >> $GITHUB_ENV
+        wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.2_build/ghidra_12.1.2_PUBLIC_20260605.zip
+        unzip ghidra_12.1.2_PUBLIC_20260605.zip
+        echo GHIDRA_INSTALL_DIR=$PWD/ghidra_12.1.2_PUBLIC >> $GITHUB_ENV
     - name: Install Patcherex2
       shell: bash
       run: |

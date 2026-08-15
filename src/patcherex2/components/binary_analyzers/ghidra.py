@@ -10,24 +10,75 @@ logger = logging.getLogger(__name__)
 
 class Ghidra(BinaryAnalyzer):
     def __init__(self, binary_path: str, **kwargs):
-        import pyhidra
+        import pyghidra
 
         self.temp_proj_dir_ctx = tempfile.TemporaryDirectory()
-        self.temp_proj_dir = self.temp_proj_dir_ctx.__enter__()
+        self.temp_proj_dir = self.temp_proj_dir_ctx.name
+        self.project = None
+        self.load_results = None
+        self.program_consumer = None
+        self.currentProgram = None
+        self.flatapi = None
 
-        self.pyhidra_ctx = pyhidra.open_program(binary_path, self.temp_proj_dir)
-        self.flatapi = self.pyhidra_ctx.__enter__()
-        self.currentProgram = self.flatapi.getCurrentProgram()
+        try:
+            pyghidra.start()
+            self.project = pyghidra.open_project(
+                self.temp_proj_dir, "patcherex2", create=True
+            )
+            self.load_results = (
+                pyghidra.program_loader()
+                .project(self.project)
+                .source(binary_path)
+                .load()
+            )
 
-        import ghidra
+            from ghidra.program.flatapi import FlatProgramAPI
+            from java.lang import Object
 
-        self.ghidra = ghidra
+            self.program_consumer = Object()
+            self.currentProgram = self.load_results.getPrimary().getDomainObject(
+                self.program_consumer
+            )
+            pyghidra.analyze(self.currentProgram)
+            self.flatapi = FlatProgramAPI(self.currentProgram)
 
-        self.bbm = self.ghidra.program.model.block.BasicBlockModel(self.currentProgram)
+            import ghidra
+
+            self.ghidra = ghidra
+            self.bbm = self.ghidra.program.model.block.BasicBlockModel(
+                self.currentProgram
+            )
+        except BaseException:
+            self.shutdown()
+            raise
 
     def shutdown(self):
-        self.pyhidra_ctx.__exit__(None, None, None)
-        self.temp_proj_dir_ctx.__exit__(None, None, None)
+        current_program = self.currentProgram
+        program_consumer = self.program_consumer
+        self.currentProgram = None
+        self.program_consumer = None
+        self.flatapi = None
+        try:
+            if current_program is not None and program_consumer is not None:
+                current_program.release(program_consumer)
+        finally:
+            load_results = self.load_results
+            self.load_results = None
+            try:
+                if load_results is not None:
+                    load_results.close()
+            finally:
+                project = self.project
+                self.project = None
+                try:
+                    if project is not None:
+                        project.close()
+                finally:
+                    temp_proj_dir_ctx = self.temp_proj_dir_ctx
+                    self.temp_proj_dir_ctx = None
+                    self.temp_proj_dir = None
+                    if temp_proj_dir_ctx is not None:
+                        temp_proj_dir_ctx.cleanup()
 
     def normalize_addr(self, addr):
         addr = addr.getOffset()
