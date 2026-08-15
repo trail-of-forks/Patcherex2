@@ -36,6 +36,11 @@ class LLVMRecomp(Clang):
             symbols = {}
         if extra_compiler_flags is None:
             extra_compiler_flags = []
+        llc_relocation_flag = (
+            "-relocation-model=pic"
+            if self.p.binfmt_tool.is_position_independent
+            else "-relocation-model=static"
+        )
         with tempfile.TemporaryDirectory() as td:
             # source file
             with open(os.path.join(td, "code.c"), "w") as f:
@@ -48,6 +53,7 @@ class LLVMRecomp(Clang):
                 args = (
                     [self._compiler]
                     + self._compiler_flags
+                    + self.pic_compiler_flags()
                     + extra_compiler_flags
                     + [
                         "-Wno-incompatible-library-redeclaration",
@@ -94,7 +100,7 @@ class LLVMRecomp(Clang):
                         os.path.join(td, "code.ll"),
                         "-o",
                         os.path.join(td, "code.mir"),
-                        "-relocation-model=pic",
+                        llc_relocation_flag,
                     ]
                     subprocess.run(args, check=True, capture_output=True)
                 except subprocess.CalledProcessError as e:
@@ -110,7 +116,7 @@ class LLVMRecomp(Clang):
                         "-o",
                         os.path.join(td, "code.2.mir"),
                         os.path.join(td, "code.mir"),
-                        "-relocation-model=pic",
+                        llc_relocation_flag,
                     ]
                     subprocess.run(args, check=True, capture_output=True)
                 except subprocess.CalledProcessError as e:
@@ -123,7 +129,7 @@ class LLVMRecomp(Clang):
                         "-o",
                         os.path.join(td, "obj.o"),
                         os.path.join(td, "code.2.mir"),
-                        "-relocation-model=pic",
+                        llc_relocation_flag,
                         "--filetype=obj",
                     ]
                     subprocess.run(args, check=True, capture_output=True)
@@ -137,7 +143,7 @@ class LLVMRecomp(Clang):
                         "-o",
                         os.path.join(td, "obj.o"),
                         os.path.join(td, "code.ll"),
-                        "-relocation-model=pic",
+                        llc_relocation_flag,
                         "--filetype=obj",
                     ]
                     subprocess.run(args, check=True, capture_output=True)
@@ -153,6 +159,7 @@ class LLVMRecomp(Clang):
 
             with open(os.path.join(td, "obj.o"), "rb") as f:
                 elf = ELFFile(f)
+                self.check_got_relocations(elf, set(_symbols))
                 self.check_object_arch(elf)
                 linker_script_rodata_sections = " ".join(
                     [

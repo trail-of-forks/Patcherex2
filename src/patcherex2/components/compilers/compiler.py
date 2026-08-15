@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 
 import cle
+from elftools.elf import enums
 from elftools.elf.elffile import ELFFile
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,10 @@ class ObjectArchMismatchError(RuntimeError):
 
 class UndefinedSymbolError(RuntimeError):
     """Raised when a linked patch object still references an undefined symbol."""
+
+
+class UnsupportedRelocationError(RuntimeError):
+    """Raised when a patch uses a relocation incompatible with its target."""
 
 
 class Compiler:
@@ -77,6 +82,69 @@ class Compiler:
                 + ", ".join(sorted(unresolved))
             )
 
+    def pic_compiler_flags(self) -> list[str]:
+        if self.p.binfmt_tool.is_position_independent:
+            return []
+
+        flags = ["-fno-pic"]
+        elf_arch = getattr(getattr(self.p, "archinfo", None), "elf_arch", {})
+        if (
+            elf_arch.get("e_machine") == "EM_MIPS"
+            and elf_arch.get("ei_class") == "ELFCLASS64"
+        ):
+            flags.append("-mno-abicalls")
+        return flags
+
+    def check_got_relocations(self, elf, defined_symbols: set[str]) -> None:
+        """Reject fixed-address relocations that treat absolute symbols as pointers."""
+        if self.p.binfmt_tool.is_position_independent:
+            return
+
+        relocation_enum_names = {
+            "EM_X86_64": "x64",
+            "EM_386": "i386",
+            "EM_AARCH64": "AARCH64",
+            "EM_ARM": "ARM",
+            "EM_MIPS": "MIPS",
+            "EM_PPC": "PPC",
+            "EM_PPC64": "PPC64",
+            "EM_S390": "S390X",
+        }
+        enum_name = relocation_enum_names.get(elf.header["e_machine"])
+        relocation_types = getattr(enums, f"ENUM_RELOC_TYPE_{enum_name}", {})
+        relocation_names = {value: name for name, value in relocation_types.items()}
+        invalid = set()
+
+        for section in elf.iter_sections():
+            if not hasattr(section, "iter_relocations"):
+                continue
+            linked_symtab = elf.get_section(section["sh_link"])
+            if linked_symtab is None:
+                continue
+            for relocation in section.iter_relocations():
+                symbol = linked_symtab.get_symbol(relocation.entry.r_info_sym)
+                if symbol.name not in defined_symbols:
+                    continue
+                relocation_name = relocation_names.get(
+                    relocation.entry.r_info_type,
+                    f"type {relocation.entry.r_info_type}",
+                )
+                if "GOT" in relocation_name or (
+                    elf.header["e_machine"] == "EM_PPC64"
+                    and section.name.endswith(".toc")
+                ):
+                    invalid.add((symbol.name, relocation_name, section.name))
+
+        if invalid:
+            details = ", ".join(
+                f"{name} ({relocation} in {section})"
+                for name, relocation, section in sorted(invalid)
+            )
+            raise UnsupportedRelocationError(
+                "Fixed-address patch references absolute symbols through unsupported "
+                f"relocations: {details}"
+            )
+
     def compile(
         self,
         code: str,
@@ -99,6 +167,7 @@ class Compiler:
                 args = (
                     [self._compiler]
                     + self._compiler_flags
+                    + self.pic_compiler_flags()
                     + extra_compiler_flags
                     + [
                         "-c",
@@ -123,6 +192,7 @@ class Compiler:
             # no gap between .text and .rodata
             with open(os.path.join(td, "obj.o"), "rb") as f:
                 elf = ELFFile(f)
+                self.check_got_relocations(elf, set(_symbols))
                 self.check_object_arch(elf)
                 linker_script_rodata_sections = " ".join(
                     [

@@ -87,11 +87,11 @@ class Utils:
 
         if detour_pos == -1:
             # near_addr biases the allocator toward PC-rel short-jump range
-            # (e.g. MIPS `b`, +/-128KB) under PIE. For non-PIE binaries the
-            # branch range is wide enough to reach a file-end trampoline,
+            # (e.g. MIPS `b`, +/-128KB) under PIE. For fixed-address binaries
+            # the branch range is wide enough to reach a file-end trampoline,
             # and biasing into an inter-LOAD vaddr gap can produce a layout
             # stricter loaders reject.
-            near_addr = addr if getattr(self.p.binfmt_tool, "is_pie", False) else None
+            near_addr = addr if self.p.binfmt_tool.is_position_independent else None
             trampoline_block = self.p.allocation_manager.allocate(
                 trampoline_size,
                 align=self.p.archinfo.alignment,

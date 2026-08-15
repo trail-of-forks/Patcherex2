@@ -8,6 +8,10 @@ class BinFmtTool:
         self.p = p
         self.binary_path = binary_path
 
+    @property
+    def is_position_independent(self) -> bool:
+        return False
+
     def _init_memory_analysis(self) -> None:
         raise NotImplementedError()
 

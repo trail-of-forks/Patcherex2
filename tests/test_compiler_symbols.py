@@ -25,6 +25,7 @@ def make_compiler(symbols=None, binary_analyzer=None):
             if binary_analyzer is None
             else binary_analyzer
         ),
+        binfmt_tool=SimpleNamespace(is_position_independent=False),
     )
     patcherex.target = ElfAmd64Linux(patcherex, BINARY)
     patcherex.archinfo = patcherex.target.get_archinfo(None)

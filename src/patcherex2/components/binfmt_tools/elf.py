@@ -93,7 +93,7 @@ class ELF(BinFmtTool):
         return self._elf.little_endian
 
     @property
-    def is_pie(self) -> bool:
+    def is_position_independent(self) -> bool:
         return self._elf.header.e_type == "ET_DYN"
 
     def _find_space_between_sections(self) -> None:
