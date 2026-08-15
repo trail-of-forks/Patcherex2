@@ -63,6 +63,7 @@ class ElfMips64elLinux(Target):
         if binary_analyzer == "angr":
             return Angr(self.binary_path, **kwargs)
         if binary_analyzer == "ghidra":
+            kwargs.setdefault("language", "MIPS:LE:64:default")
             return Ghidra(self.binary_path, **kwargs)
         raise NotImplementedError()
 

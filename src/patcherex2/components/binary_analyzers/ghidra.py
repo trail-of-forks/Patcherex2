@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class Ghidra(BinaryAnalyzer):
-    def __init__(self, binary_path: str, **kwargs):
+    def __init__(self, binary_path: str, language: str | None = None, **kwargs):
         import pyghidra
 
         self.temp_proj_dir_ctx = tempfile.TemporaryDirectory()
@@ -25,12 +25,10 @@ class Ghidra(BinaryAnalyzer):
             self.project = pyghidra.open_project(
                 self.temp_proj_dir, "patcherex2", create=True
             )
-            self.load_results = (
-                pyghidra.program_loader()
-                .project(self.project)
-                .source(binary_path)
-                .load()
-            )
+            loader = pyghidra.program_loader().project(self.project)
+            if language is not None:
+                loader = loader.language(language)
+            self.load_results = loader.source(binary_path).load()
 
             from ghidra.program.flatapi import FlatProgramAPI
             from java.lang import Object
