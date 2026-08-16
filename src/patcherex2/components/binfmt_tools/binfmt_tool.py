@@ -119,3 +119,6 @@ class BinFmtTool:
     def page_alignment(self) -> int:
         # ELF overrides with max segment p_align
         return 0x1000
+
+    def minimum_memory_address_for_new_segment(self, file_offset: int) -> int | None:
+        return None

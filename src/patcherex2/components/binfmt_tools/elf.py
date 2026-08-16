@@ -100,6 +100,42 @@ class ELF(BinFmtTool):
         # max p_align so new blocks satisfy every existing segment
         return max((segment["p_align"] for segment in self._segments), default=0x1000)
 
+    def minimum_memory_address_for_new_segment(self, file_offset: int) -> int | None:
+        load_offsets = [
+            segment["p_vaddr"] - segment["p_offset"]
+            for segment in self._segments
+            if segment["p_type"] == "PT_LOAD"
+        ]
+        if not load_offsets:
+            return None
+        return file_offset + min(load_offsets)
+
+    @staticmethod
+    def _order_program_headers(segments: list[Container]) -> list[Container]:
+        def sort_key(segment: Container) -> tuple[int, int]:
+            if segment["p_type"] == "PT_PHDR":
+                return (0, 0)
+            if segment["p_type"] == "PT_INTERP":
+                return (1, 0)
+            if segment["p_type"] == "PT_LOAD":
+                return (2, segment["p_vaddr"])
+            return (3, 0)
+
+        return sorted(segments, key=sort_key)
+
+    @staticmethod
+    def _merge_overlapping_ranges(
+        ranges: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        merged = []
+        for start, end in sorted(ranges):
+            if merged and start < merged[-1][1]:
+                previous_start, previous_end = merged[-1]
+                merged[-1] = (previous_start, max(previous_end, end))
+            else:
+                merged.append((start, end))
+        return merged
+
     @property
     def little_endian(self) -> bool:
         return self._elf.little_endian
@@ -494,6 +530,7 @@ class ELF(BinFmtTool):
             )
             <= load_segment_count
         ):
+            self._segments = self._order_program_headers(self._segments)
             # just rebuild segment headers, it will be in place so we don't care if there is PHDR or not
             new_phdr = b""
             for segment in self._segments:
@@ -536,47 +573,20 @@ class ELF(BinFmtTool):
                                 % max_align
                             ),
                             # end of the segment, round up to multiple of max_align
-                            int(
-                                (
-                                    segment["p_vaddr"]
-                                    + segment["p_memsz"]
-                                    - first_load_segment["p_vaddr"]
-                                    + max_align
-                                    - 1
-                                )
-                                / max_align
+                            (
+                                segment["p_vaddr"]
+                                + segment["p_memsz"]
+                                - first_load_segment["p_vaddr"]
+                                + max_align
+                                - 1
                             )
+                            // max_align
                             * max_align,
                         )
                     )
-            load_segments_rounded = sorted(load_segments_rounded, key=lambda x: x[0])
-
-            # combine overlapping load segments
-            while True:
-                new_load_segments_rounded = []
-                i = 0
-                while i < len(load_segments_rounded) - 1:
-                    prev_seg = load_segments_rounded[i]
-                    next_seg = load_segments_rounded[i + 1]
-                    if prev_seg[1] > next_seg[0]:  # two segments overlap
-                        new_load_segments_rounded.append(
-                            (prev_seg[0], next_seg[1])
-                        )  # append combine of two segments
-                        i += 2
-                    else:
-                        new_load_segments_rounded.append(
-                            prev_seg
-                        )  # append segment without overlap
-                        i += 1
-                if i == len(load_segments_rounded) - 1:
-                    new_load_segments_rounded.append(
-                        load_segments_rounded[i]
-                    )  # append last segment if without overlapping
-                if new_load_segments_rounded == load_segments_rounded:  # if no overlap
-                    break
-                load_segments_rounded = (
-                    new_load_segments_rounded  # combined segments, run again
-                )
+            load_segments_rounded = self._merge_overlapping_ranges(
+                load_segments_rounded
+            )
 
             for prev_seg, next_seg in pairwise(load_segments_rounded):
                 # TODO: should we use the max_align of the segments?
@@ -615,11 +625,9 @@ class ELF(BinFmtTool):
                     segment["p_vaddr"] = phdr_start + first_load_segment["p_vaddr"]
                     segment["p_paddr"] = phdr_start + first_load_segment["p_vaddr"]
 
-            # create new phdr segment to be put in the new load segment above
-            # make sure PHDR is the first segment
-            self._segments = sorted(
-                self._segments, key=lambda x: (x["p_type"] != "PT_PHDR", x["p_offset"])
-            )
+            # PT_PHDR and PT_INTERP must precede PT_LOAD entries, and the
+            # System V ABI requires PT_LOAD entries in ascending p_vaddr order.
+            self._segments = self._order_program_headers(self._segments)
             new_phdr = b""
             for segment in self._segments:
                 new_phdr += self._elf.structs.Elf_Phdr.build(segment)

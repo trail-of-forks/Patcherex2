@@ -250,14 +250,49 @@ class AllocationManager:
         max_dist: int | None,
         page_align: int,
     ) -> tuple[int, int, int] | None:
-        # Reserve a chunk from the MemoryBlock whose closest valid mem_addr
-        # to near_addr satisfies max_dist. File space comes from file-end
-        # with matching p_align residue.
+        # Append at file-end, then choose the closest memory address with the
+        # same p_align residue. This avoids alignment padding in the file.
+        file_block = next(
+            (block for block in self.blocks[FileBlock] if block.size == -1),
+            None,
+        )
+        if file_block is None:
+            return None
+        file_addr = max(
+            getattr(self.p.binfmt_tool, "file_size", file_block.addr), file_block.addr
+        )
+        residue = file_addr % page_align
+        minimum_memory_address = getattr(
+            self.p.binfmt_tool,
+            "minimum_memory_address_for_new_segment",
+            lambda _: None,
+        )(file_addr)
+
         best, best_dist = None, None
         for mb in self.blocks[MemoryBlock]:
             if mb.size == -1 or mb.size < size:
                 continue
-            candidate = max(mb.addr, min(near_addr, mb.addr + mb.size - size))
+            lower_bound = max(
+                mb.addr,
+                minimum_memory_address
+                if minimum_memory_address is not None
+                else mb.addr,
+            )
+            first = lower_bound + (residue - lower_bound) % page_align
+            last_limit = mb.addr + mb.size - size
+            last = last_limit - (last_limit - residue) % page_align
+            if first > last:
+                continue
+
+            steps = max(
+                0, min((near_addr - first) // page_align, (last - first) // page_align)
+            )
+            candidate = first + steps * page_align
+            next_candidate = candidate + page_align
+            if next_candidate <= last and abs(next_candidate - near_addr) < abs(
+                candidate - near_addr
+            ):
+                candidate = next_candidate
             dist = abs(candidate - near_addr)
             if max_dist is not None and dist > max_dist:
                 continue
@@ -265,10 +300,10 @@ class AllocationManager:
                 best, best_dist = (mb, candidate), dist
         if best is None:
             return None
+
         mb, mem_addr = best
         available = (mb.addr + mb.size) - mem_addr
         block_size = min(available, self.CHUNK)
-
         prefix_size = mem_addr - mb.addr
         suffix_addr = mem_addr + block_size
         suffix_size = (mb.addr + mb.size) - suffix_addr
@@ -280,12 +315,7 @@ class AllocationManager:
             self.blocks[MemoryBlock].append(MemoryBlock(suffix_addr, suffix_size))
             self.blocks[MemoryBlock].sort()
 
-        file_size = self.p.binfmt_tool.file_size
-        residue = mem_addr % page_align
-        file_addr = ((file_size + page_align - 1) // page_align) * page_align + residue
-        for fb in self.blocks[FileBlock]:
-            if fb.size == -1:
-                fb.addr = max(fb.addr, file_addr + block_size)
+        file_block.addr = max(file_block.addr, file_addr + block_size)
         return (file_addr, mem_addr, block_size)
 
     def _extend_at_open_end(

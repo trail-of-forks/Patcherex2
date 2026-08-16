@@ -28,6 +28,29 @@ def test_open_end_allocation_honors_reachable_max_distance():
     assert block.mem_addr == 0x3000
 
 
+def test_gap_allocation_appends_at_file_end_with_compatible_memory_address():
+    binfmt_tool = SimpleNamespace(
+        file_size=0x1234,
+        minimum_memory_address_for_new_segment=lambda offset: offset + 0x1000,
+        page_alignment=lambda: 0x1000,
+    )
+    manager = AllocationManager(SimpleNamespace(binfmt_tool=binfmt_tool))
+    manager.add_block(FileBlock(0x1234, -1))
+    manager.add_block(MemoryBlock(0x1000, 0x5000))
+    manager.add_block(MemoryBlock(0x8000, -1))
+
+    block = manager.allocate(
+        0x20,
+        flag=MemoryFlag.RX,
+        near_addr=0x1200,
+        max_dist=0x2000,
+    )
+
+    assert block.file_addr == 0x1234
+    assert block.mem_addr == 0x2234
+    assert block.mem_addr - block.file_addr == 0x1000
+
+
 def test_open_end_allocation_rejects_unreachable_max_distance():
     binfmt_tool = SimpleNamespace(page_alignment=lambda: 0x1000)
     manager = AllocationManager(SimpleNamespace(binfmt_tool=binfmt_tool))
