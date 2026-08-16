@@ -29,7 +29,7 @@ class Block:
         return f"<{self.__class__.__name__} addr={hex(self.addr)} size={hex(self.size)} is_free={self.is_free}>"
 
     def coalesce(self, other: Block) -> bool:
-        if self.is_free == other.is_free and self.addr + self.size == other.addr:
+        if self.is_free and other.is_free and self.addr + self.size == other.addr:
             self.size += other.size
             return True
         return False
@@ -84,8 +84,9 @@ class MappedBlock(Block):
 
     def coalesce(self, other: MappedBlock) -> bool:
         if (
-            self.flag == other.flag
-            and self.is_free == other.is_free
+            self.is_free
+            and other.is_free
+            and self.flag == other.flag
             and self.file_addr + self.size == other.file_addr
             and self.mem_addr + self.size == other.mem_addr
         ):
@@ -158,9 +159,6 @@ class AllocationManager:
             offset = (align - (block.mem_addr % align)) % align
             if block.size < size + offset:
                 continue
-            if near_addr is None and block.size == size + offset and offset > 0:
-                block.is_free = False
-                return block
             if near_addr is not None:
                 metric = abs(block.mem_addr + offset - near_addr)
                 if max_dist is not None and metric > max_dist:
@@ -174,25 +172,34 @@ class AllocationManager:
             return None
         offset = (align - (best.mem_addr % align)) % align
         remaining = best.size - size - offset
+        original_file_addr = best.file_addr
+        original_mem_addr = best.mem_addr
+        original_flag = best.flag
         allocated = MappedBlock(
-            best.file_addr + offset,
-            best.mem_addr + offset,
+            original_file_addr + offset,
+            original_mem_addr + offset,
             size,
             is_free=False,
-            flag=flag,
+            flag=original_flag,
         )
-        self.add_block(allocated)
+
+        if remaining == 0:
+            self.blocks[MappedBlock].remove(best)
+        else:
+            best.file_addr = original_file_addr + size + offset
+            best.mem_addr = original_mem_addr + size + offset
+            best.size = remaining
         if offset > 0:
             self.add_block(
                 MappedBlock(
-                    best.file_addr, best.mem_addr, offset, is_free=True, flag=flag
+                    original_file_addr,
+                    original_mem_addr,
+                    offset,
+                    is_free=True,
+                    flag=original_flag,
                 )
             )
-        best.file_addr += size + offset
-        best.mem_addr += size + offset
-        best.size = remaining
-        if best.size == 0:
-            self.blocks[MappedBlock].remove(best)
+        self.add_block(allocated)
         return allocated
 
     def _create_new_mapped_block(
@@ -331,7 +338,9 @@ class AllocationManager:
 
     def free(self, block: Block) -> None:
         block.is_free = True
-        self.coalesce(self.blocks[type(block)])
+        blocks = self.blocks[type(block)]
+        blocks.sort()
+        self.coalesce(blocks)
 
     def coalesce(self, blocks: list[Block]) -> None:
         for curr, nxt in pairwise(blocks):
