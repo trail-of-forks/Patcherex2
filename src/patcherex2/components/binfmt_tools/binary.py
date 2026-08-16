@@ -34,27 +34,14 @@ class Binary(BinFmtTool):
         logger.debug(
             f"Updating offset {hex(offset)} with content ({len(new_content)} bytes) {new_content.hex()}"
         )
-        for update in self.file_updates:
-            if offset >= update["offset"] and offset < update["offset"] + len(
-                update["content"]
-            ):
-                raise ValueError(
-                    f"Cannot update offset {hex(offset)} with content {new_content}, it overlaps with a previous update"
-                )
-        self.file_updates.append({"offset": offset, "content": new_content})
-        self.file_size = max(self.file_size, offset + len(new_content))
+        self._record_file_update(offset, new_content)
 
     def get_binary_content(self, offset: int, size: int) -> bytes:
-        # FIXME: content partially in the file and partially in the updates (check other binfmt tools as well)
-        for update in self.file_updates:
-            if offset >= update["offset"] and offset + size <= update["offset"] + len(
-                update["content"]
-            ):
-                return update["content"][
-                    offset - update["offset"] : offset - update["offset"] + size
-                ]
-        return self._original[offset : offset + size]
+        read_size = self._read_size(offset, size)
+        original_content = self._original[offset : offset + read_size].ljust(
+            read_size, b"\x00"
+        )
+        return self._overlay_file_updates(offset, original_content)
 
     def append_to_binary_content(self, new_content: bytes) -> None:
-        self.file_updates.append({"offset": self.file_size, "content": new_content})
-        self.file_size += len(new_content)
+        self.update_binary_content(self.file_size, new_content)

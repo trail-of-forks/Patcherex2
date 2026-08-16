@@ -649,85 +649,17 @@ class ELF(BinFmtTool):
         os.chmod(filename, 0o755)
 
     def update_binary_content(self, offset: int, new_content: bytes) -> None:
-        if offset < 0:
-            raise ValueError(f"Cannot update a negative file offset: {offset}")
-        new_content = bytes(new_content)
-        if not new_content:
-            return
-
         logger.debug(
             f"Updating offset {hex(offset)} with content ({len(new_content)} bytes) {new_content.hex()}"
         )
-        new_end = offset + len(new_content)
-        overlapping_updates = []
-        for update in self.file_updates:
-            old_start = update["offset"]
-            old_content = update["content"]
-            old_end = old_start + len(old_content)
-            if offset < old_end and old_start < new_end:
-                overlap_start = max(offset, old_start)
-                overlap_end = min(new_end, old_end)
-                new_slice = new_content[overlap_start - offset : overlap_end - offset]
-                old_slice = old_content[
-                    overlap_start - old_start : overlap_end - old_start
-                ]
-                if new_slice != old_slice:
-                    raise ValueError(
-                        f"Cannot update file interval [{hex(offset)}, {hex(new_end)}) "
-                        f"because it conflicts with a previous update interval "
-                        f"[{hex(old_start)}, {hex(old_end)})"
-                    )
-                overlapping_updates.append(update)
-
-        if overlapping_updates:
-            merged_start = min(
-                [offset] + [update["offset"] for update in overlapping_updates]
-            )
-            merged_end = max(
-                [new_end]
-                + [
-                    update["offset"] + len(update["content"])
-                    for update in overlapping_updates
-                ]
-            )
-            merged_content = bytearray(merged_end - merged_start)
-            covered = bytearray(merged_end - merged_start)
-            for update in overlapping_updates:
-                start = update["offset"] - merged_start
-                end = start + len(update["content"])
-                merged_content[start:end] = update["content"]
-                covered[start:end] = b"\x01" * (end - start)
-            start = offset - merged_start
-            end = start + len(new_content)
-            merged_content[start:end] = new_content
-            covered[start:end] = b"\x01" * (end - start)
-            if not all(covered):
-                raise RuntimeError("Internal error while merging file updates")
-
-            overlapping_ids = {id(update) for update in overlapping_updates}
-            self.file_updates = [
-                update
-                for update in self.file_updates
-                if id(update) not in overlapping_ids
-            ]
-            self.file_updates.append(
-                {"offset": merged_start, "content": bytes(merged_content)}
-            )
-        else:
-            self.file_updates.append({"offset": offset, "content": new_content})
-
-        self.file_updates.sort(key=lambda update: update["offset"])
-        self.file_size = max(self.file_size, new_end)
+        self._record_file_update(offset, new_content)
 
     def get_binary_content(self, offset: int, size: int) -> bytes:
-        for update in self.file_updates:
-            if offset >= update["offset"] and offset + size <= update["offset"] + len(
-                update["content"]
-            ):
-                start = offset - update["offset"]
-                return update["content"][start : start + size]
-        return self.original_binary_content[offset : offset + size]
+        read_size = self._read_size(offset, size)
+        original_content = self.original_binary_content[
+            offset : offset + read_size
+        ].ljust(read_size, b"\x00")
+        return self._overlay_file_updates(offset, original_content)
 
     def append_to_binary_content(self, new_content: bytes) -> None:
-        self.file_updates.append({"offset": self.file_size, "content": new_content})
-        self.file_size += len(new_content)
+        self.update_binary_content(self.file_size, new_content)
