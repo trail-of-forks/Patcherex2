@@ -8,6 +8,7 @@ class Aarch64Info:
     nop_size = 4
     jmp_asm = "b {dst}"
     jmp_size = 4
+    jmp_max_distance = 0x07FFFFFC
     alignment = 4
     bits = 64
     is_variable_length_isa = False

@@ -8,6 +8,7 @@ class Amd64Info:
     nop_size = 1
     jmp_asm = "jmp {dst}"
     jmp_size = 6
+    jmp_max_distance = 0x7FFFFFF0
     alignment = 4
     bits = 64
     is_variable_length_isa = True

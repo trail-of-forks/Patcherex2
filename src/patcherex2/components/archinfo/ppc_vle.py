@@ -8,6 +8,7 @@ class PpcVleInfo:
     nop_size = 4
     jmp_asm = "b {dst}"
     jmp_size = 4
+    jmp_max_distance = 0x01FFFFFC
     alignment = 4
     bits = 32
     is_variable_length_isa = True

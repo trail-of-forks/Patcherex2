@@ -104,11 +104,11 @@ class Ida(BinaryAnalyzer):
     def get_unused_funcs(self) -> list[dict[str, int]]:
         logger.info("Getting unused functions with IDA")
         unused_funcs = []
-        for func in self.ida_funcs.get_func_qty():
-            func = self.ida_funcs.getn_func(func)
+        for index in range(self.ida_funcs.get_func_qty()):
+            func = self.ida_funcs.getn_func(index)
             if func is None or func.size == 0:
                 continue
-            for _ in self.ida_xref.XrefsTo(func.start_ea, 0):
+            for _ in self.idautils.XrefsTo(func.start_ea, 0):
                 break
             else:
                 unused_funcs.append(

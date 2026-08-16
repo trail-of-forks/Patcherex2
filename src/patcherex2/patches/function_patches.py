@@ -66,14 +66,20 @@ class ModifyFunctionPatch(Patch):
         else:
             # TODO: mark the function as free (exclude jump instr)
             if self.detour_pos == -1:
+                near_addr, max_dist = p.utils.jump_allocation_constraints(func["addr"])
                 block = p.allocation_manager.allocate(
-                    compiled_size + 0x20, align=0x4, flag=MemoryFlag.RX
+                    compiled_size + 0x20,
+                    align=0x4,
+                    flag=MemoryFlag.RX,
+                    near_addr=near_addr,
+                    max_dist=max_dist,
                 )
                 mem_addr = block.mem_addr
                 file_addr = block.file_addr
             else:
                 mem_addr = self.detour_pos
                 file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
+            p.utils.validate_jump_distance(func["addr"], mem_addr)
             jmp_instr = p.archinfo.jmp_asm.format(dst=hex(mem_addr))
             jmp_bytes = p.assembler.assemble(
                 jmp_instr,

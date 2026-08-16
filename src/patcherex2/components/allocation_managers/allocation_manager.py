@@ -236,12 +236,12 @@ class AllocationManager:
                     f"file={hex(file_addr)} mem={hex(mem_addr)} size={hex(block_size)}"
                 )
                 return True
-            # With max_dist set, the file-end fallback is guaranteed too
-            # far -- give up so allocate() raises instead of looping.
-            if max_dist is not None:
-                return False
-
-        return self._extend_at_open_end(flag, page_align)
+        return self._extend_at_open_end(
+            flag,
+            page_align,
+            near_addr=near_addr,
+            max_dist=max_dist,
+        )
 
     def _reserve_in_memory_gap(
         self,
@@ -288,21 +288,36 @@ class AllocationManager:
                 fb.addr = max(fb.addr, file_addr + block_size)
         return (file_addr, mem_addr, block_size)
 
-    def _extend_at_open_end(self, flag, page_align: int) -> bool:
+    def _extend_at_open_end(
+        self,
+        flag,
+        page_align: int,
+        near_addr: int | None = None,
+        max_dist: int | None = None,
+    ) -> bool:
         # TODO: reuse finite FileBlock entries (inter-segment file slop).
-        file_addr = None
-        mem_addr = None
-        for block in self.blocks[FileBlock]:
-            if block.size == -1:
-                file_addr = block.addr
-                block.addr += self.CHUNK
-        for block in self.blocks[MemoryBlock]:
-            if block.size == -1:
-                # ELF p_align: mem_addr % p_align == file_addr % p_align
-                mem_addr = block.addr + (file_addr - block.addr) % page_align
-                block.addr = mem_addr + self.CHUNK
-        if file_addr is None or mem_addr is None:
+        file_block = next(
+            (block for block in self.blocks[FileBlock] if block.size == -1),
+            None,
+        )
+        memory_block = next(
+            (block for block in self.blocks[MemoryBlock] if block.size == -1),
+            None,
+        )
+        if file_block is None or memory_block is None:
             return False
+
+        file_addr = file_block.addr
+        mem_addr = memory_block.addr + (file_addr - memory_block.addr) % page_align
+        if (
+            near_addr is not None
+            and max_dist is not None
+            and abs(mem_addr - near_addr) > max_dist
+        ):
+            return False
+
+        file_block.addr += self.CHUNK
+        memory_block.addr = mem_addr + self.CHUNK
         self.add_block(
             MappedBlock(file_addr, mem_addr, self.CHUNK, is_free=True, flag=flag)
         )

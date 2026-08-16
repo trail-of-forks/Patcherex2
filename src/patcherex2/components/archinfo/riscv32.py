@@ -8,6 +8,7 @@ class Riscv32Info:
     nop_size = 4
     jmp_asm = "tail {dst}"  # pseudo-instruction
     jmp_size = 8
+    jmp_max_distance = 0x7FFFF000
     alignment = 2
     bits = 32
     is_variable_length_isa = True

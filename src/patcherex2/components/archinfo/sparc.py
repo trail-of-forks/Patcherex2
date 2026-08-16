@@ -8,6 +8,7 @@ class SparcInfo:
     nop_size = 4
     jmp_asm = "b {dst}\nnop"  # nop due to delay slot
     jmp_size = 8
+    jmp_max_distance = 0x007FFFFC
     alignment = 4
     is_variable_length_isa = False
     instr_size = 4

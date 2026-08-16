@@ -2,16 +2,66 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 
-from ..allocation_managers.allocation_manager import MemoryFlag
+from ..allocation_managers.allocation_manager import MappedBlock, MemoryFlag
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidInsertPointError(ValueError):
+    """Raised when a trampoline detour cannot start at the requested address."""
+
+    def __init__(self, addr: int, candidates: list[int]) -> None:
+        self.addr = addr
+        self.candidates = tuple(candidates)
+        message = f"Cannot insert instruction at {hex(addr)}"
+        if candidates:
+            candidate_text = ", ".join(hex(candidate) for candidate in candidates)
+            message += (
+                f"; mechanically valid points in the same basic block: {candidate_text}"
+            )
+        super().__init__(message)
 
 
 class Utils:
     def __init__(self, p, binary_path: str) -> None:
         self.p = p
         self.binary_path = binary_path
+
+    def _available_jump_distance(self, reserved_size: int = 0) -> int | None:
+        if reserved_size < 0:
+            raise ValueError("Reserved jump size cannot be negative")
+        max_jump_distance = getattr(self.p.archinfo, "jmp_max_distance", None)
+        if max_jump_distance is None:
+            return None
+        if reserved_size > max_jump_distance:
+            raise ValueError(
+                f"Reserved jump size {hex(reserved_size)} exceeds architecture "
+                f"maximum distance {hex(max_jump_distance)}"
+            )
+        return max_jump_distance - reserved_size
+
+    def jump_allocation_constraints(
+        self, source_addr: int, reserved_size: int = 0
+    ) -> tuple[int | None, int | None]:
+        max_dist = self._available_jump_distance(reserved_size)
+        near_addr = (
+            source_addr
+            if self.p.binfmt_tool.is_position_independent or max_dist is not None
+            else None
+        )
+        return near_addr, max_dist
+
+    def validate_jump_distance(
+        self, source_addr: int, target_addr: int, reserved_size: int = 0
+    ) -> None:
+        max_dist = self._available_jump_distance(reserved_size)
+        if max_dist is not None and abs(target_addr - source_addr) > max_dist:
+            raise ValueError(
+                f"Jump from {hex(source_addr)} to {hex(target_addr)} exceeds "
+                f"architecture maximum distance {hex(max_dist)}"
+            )
 
     def _build_trampoline_bytes(
         self,
@@ -72,16 +122,17 @@ class Utils:
         self,
         addr: int,
         initial_size: int,
-        build,
-    ):
-        near_addr = addr if self.p.binfmt_tool.is_position_independent else None
+        build: Callable[[int], bytes],
+    ) -> tuple[MappedBlock, bytes]:
         requested_size = initial_size
         for _ in range(16):
+            near_addr, max_dist = self.jump_allocation_constraints(addr, requested_size)
             block = self.p.allocation_manager.allocate(
                 requested_size,
                 align=self.p.archinfo.alignment,
                 flag=MemoryFlag.RX,
                 near_addr=near_addr,
+                max_dist=max_dist,
             )
             trampoline_bytes = build(block.mem_addr)
             if len(trampoline_bytes) <= block.size:
@@ -105,9 +156,11 @@ class Utils:
     ) -> None:
         logger.debug(f"Inserting trampoline code at {hex(addr)}: {instrs}")
         symbols = symbols if symbols else {}
-        assert force_insert or self.is_valid_insert_point(addr), (
-            f"Cannot insert instruction at {hex(addr)}"
-        )
+        if not force_insert and not self.is_valid_insert_point(addr):
+            raise InvalidInsertPointError(
+                addr,
+                self.find_valid_insert_points_near(addr),
+            )
         if not force_insert:
             moved_instrs, moved_instrs_len = self.get_instrs_to_be_moved(addr)
         else:
@@ -148,6 +201,7 @@ class Utils:
         else:
             mem_addr = detour_pos
             trampoline_bytes = build(mem_addr)
+            self.validate_jump_distance(addr, mem_addr, len(trampoline_bytes))
             for block in self.p.allocation_manager.new_mapped_blocks:
                 if block.mem_addr == mem_addr:
                     if len(trampoline_bytes) > block.size:
@@ -204,6 +258,22 @@ class Utils:
 
     def is_valid_insert_point(self, addr: int) -> bool:
         return self.get_instrs_to_be_moved(addr) is not None
+
+    def find_valid_insert_points_near(
+        self,
+        addr: int,
+        limit: int = 4,
+    ) -> list[int]:
+        basic_block = self.p.binary_analyzer.get_basic_block(addr)
+        if basic_block is None:
+            return []
+        candidates = [
+            candidate
+            for candidate in basic_block["instruction_addrs"]
+            if candidate != addr and self.is_valid_insert_point(candidate)
+        ]
+        candidates.sort(key=lambda candidate: (abs(candidate - addr), candidate))
+        return candidates[:limit]
 
     def is_movable_instruction(self, addr: int) -> bool:
         is_thumb = self.p.binary_analyzer.is_thumb(addr)

@@ -8,6 +8,7 @@ class S390xInfo:
     nop_size = 2
     jmp_asm = "jg {dst}"
     jmp_size = 6
+    jmp_max_distance = 0xFFFFFFF0
     alignment = 2
     bits = 64
     is_variable_length_isa = True
