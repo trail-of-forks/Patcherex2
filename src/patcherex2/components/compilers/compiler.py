@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import os
 import subprocess
@@ -29,6 +30,8 @@ class Compiler:
         self.p = p
         # preserve_none is a special attribute flag to allow us to control more registers as input to a C function
         self.preserve_none = False
+        self._object_cache: dict[tuple[str, tuple[str, ...], str], bytes] = {}
+        self._binary_symbols_cache: dict[str, int] | None = None
 
     def check_object_arch(self, elf) -> None:
         """Reject an ELF object that does not match the target archinfo."""
@@ -157,40 +160,54 @@ class Compiler:
             symbols = {}
         if extra_compiler_flags is None:
             extra_compiler_flags = []
+        compiler_flags = (
+            tuple(self._compiler_flags)
+            + tuple(self.pic_compiler_flags())
+            + tuple(extra_compiler_flags)
+        )
+        object_key = (self._compiler, compiler_flags, code)
         with tempfile.TemporaryDirectory() as td:
-            # source file
-            with open(os.path.join(td, "code.c"), "w") as f:
-                f.write(code)
-
-            # compile to object file
-            try:
-                args = (
-                    [self._compiler]
-                    + self._compiler_flags
-                    + self.pic_compiler_flags()
-                    + extra_compiler_flags
-                    + [
-                        "-c",
-                        os.path.join(td, "code.c"),
-                        "-o",
-                        os.path.join(td, "obj.o"),
-                    ]
-                )
-                subprocess.run(args, check=True, capture_output=True)
-            except subprocess.CalledProcessError as e:
-                logger.error(e.stderr.decode("utf-8"))
-                raise
+            object_path = os.path.join(td, "obj.o")
+            object_bytes = self._object_cache.get(object_key)
+            if object_bytes is None:
+                source_path = os.path.join(td, "code.c")
+                with open(source_path, "w") as f:
+                    f.write(code)
+                try:
+                    subprocess.run(
+                        [
+                            self._compiler,
+                            *compiler_flags,
+                            "-c",
+                            source_path,
+                            "-o",
+                            object_path,
+                        ],
+                        check=True,
+                        capture_output=True,
+                    )
+                except subprocess.CalledProcessError as e:
+                    logger.error(e.stderr.decode("utf-8"))
+                    raise
+                with open(object_path, "rb") as f:
+                    object_bytes = f.read()
+                self._object_cache[object_key] = object_bytes
+            else:
+                with open(object_path, "wb") as f:
+                    f.write(object_bytes)
 
             # linker script
             _symbols = {}
             _symbols.update(self.p.symbols)
-            _symbols.update(self.p.binary_analyzer.get_all_symbols())
+            if self._binary_symbols_cache is None:
+                self._binary_symbols_cache = self.p.binary_analyzer.get_all_symbols()
+            _symbols.update(self._binary_symbols_cache)
             _symbols.update(symbols)
 
             # TODO: shouldn't put .rodata in .text, but otherwise switch case jump table won't work
             # Note that even we don't include .rodata here, cle might still include it if there is
             # no gap between .text and .rodata
-            with open(os.path.join(td, "obj.o"), "rb") as f:
+            with io.BytesIO(object_bytes) as f:
                 elf = ELFFile(f)
                 self.check_got_relocations(elf, set(_symbols))
                 self.check_object_arch(elf)

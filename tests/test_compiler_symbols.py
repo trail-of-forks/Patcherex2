@@ -1,4 +1,5 @@
 import os
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -143,3 +144,39 @@ def test_compile_accepts_defined_extern_data():
     compiled = make_compiler({"g_auth_token": 0x404100}).compile(EXTERN_DATA_CODE)
 
     assert compiled
+
+
+def test_compile_caches_object_but_relinks_for_each_base(monkeypatch):
+    symbol_calls = 0
+
+    def get_all_symbols():
+        nonlocal symbol_calls
+        symbol_calls += 1
+        return {}
+
+    compiler = make_compiler(
+        {"external": 0x400000},
+        binary_analyzer=SimpleNamespace(get_all_symbols=get_all_symbols),
+    )
+    compile_calls = 0
+    link_calls = 0
+    original_run = subprocess.run
+
+    def recording_run(args, **kwargs):
+        nonlocal compile_calls, link_calls
+        if "-c" in args:
+            compile_calls += 1
+        elif args[0] == compiler._linker:
+            link_calls += 1
+        return original_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
+    code = "extern int external(void); int f(void) { return external(); }"
+
+    first = compiler.compile(code, base=0x1000)
+    second = compiler.compile(code, base=0x2000)
+
+    assert first != second
+    assert compile_calls == 1
+    assert link_calls == 2
+    assert symbol_calls == 1
