@@ -72,10 +72,14 @@ class Ida(BinaryAnalyzer):
         file_type = self.ida_loader.get_file_type_name()
         if "intel hex" in file_type.lower():
             return addr
-        file_offset = self.ida_loader.get_fileregion_offset(addr)
-        return file_offset if file_offset != -1 else None
+        ida_addr = self.denormalize_addr(addr)
+        file_offset = self.ida_loader.get_fileregion_offset(ida_addr)
+        if file_offset == -1:
+            raise ValueError(f"Memory address {hex(addr)} is not mapped to the file")
+        return file_offset
 
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
+        addr = self.denormalize_addr(addr)
         func = self.ida_funcs.get_func(addr)
         instr_addrs = list(func.code_items())
         assert addr in instr_addrs, "Invalid address"
@@ -84,15 +88,18 @@ class Ida(BinaryAnalyzer):
         for block in flowchart:
             if block.start_ea <= addr < block.end_ea:
                 return {
-                    "start": block.start_ea,
-                    "end": block.end_ea,
+                    "start": self.normalize_addr(block.start_ea),
+                    "end": self.normalize_addr(block.end_ea),
                     "size": block.end_ea - block.start_ea,
                     "instruction_addrs": [
-                        ea for ea in instr_addrs if block.start_ea <= ea < block.end_ea
+                        self.normalize_addr(ea)
+                        for ea in instr_addrs
+                        if block.start_ea <= ea < block.end_ea
                     ],
                 }
 
     def get_instr_bytes_at(self, addr: int, num_instr: int = 1):
+        addr = self.denormalize_addr(addr)
         total_bytes = b""
         current_addr = addr
         for _ in range(num_instr):
@@ -106,7 +113,7 @@ class Ida(BinaryAnalyzer):
         unused_funcs = []
         for index in range(self.ida_funcs.get_func_qty()):
             func = self.ida_funcs.getn_func(index)
-            if func is None or func.size == 0:
+            if func is None or func.end_ea <= func.start_ea:
                 continue
             for _ in self.idautils.XrefsTo(func.start_ea, 0):
                 break
@@ -114,7 +121,7 @@ class Ida(BinaryAnalyzer):
                 unused_funcs.append(
                     {
                         "addr": self.normalize_addr(func.start_ea),
-                        "size": func.size,
+                        "size": func.end_ea - func.start_ea,
                     }
                 )
         return unused_funcs
@@ -179,4 +186,5 @@ class Ida(BinaryAnalyzer):
         }
 
     def is_thumb(self, addr: int) -> bool:
+        addr = self.denormalize_addr(addr)
         return self.ida_segregs.get_sreg(addr, self.ida_idp.str2reg("T")) == 1

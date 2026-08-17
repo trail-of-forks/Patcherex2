@@ -2,11 +2,7 @@
 Contains patches that modify the binary at the byte level.
 """
 
-import logging
-
 from .patch import Patch
-
-logger = logging.getLogger(__name__)
 
 
 class ModifyRawBytesPatch(Patch):
@@ -37,11 +33,6 @@ class ModifyRawBytesPatch(Patch):
             offset = self.addr
         elif self.addr_type == "mem":
             offset = p.binary_analyzer.mem_addr_to_file_offset(self.addr)
-            if offset is None:
-                logger.warning(
-                    "failed to convert mem addr to file offset, will just default to raw addr"
-                )
-                offset = self.addr
         else:
             raise NotImplementedError()
         p.binfmt_tool.update_binary_content(offset, self.new_bytes)

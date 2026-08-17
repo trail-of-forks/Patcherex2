@@ -61,13 +61,10 @@ class Angr(BinaryAnalyzer):
         return self._cfg
 
     def mem_addr_to_file_offset(self, addr: int) -> int:
-        addr = self.denormalize_addr(addr)
-        file_addr = self.p.loader.main_object.addr_to_offset(addr)
+        loader_addr = self.denormalize_addr(addr)
+        file_addr = self.p.loader.main_object.addr_to_offset(loader_addr)
         if file_addr is None:
-            logger.error(
-                f"Cannot convert memory address {hex(addr)} to file offset, will use the memory address instead"
-            )
-            return addr
+            raise ValueError(f"Memory address {hex(addr)} is not mapped to the file")
         return file_addr
 
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:

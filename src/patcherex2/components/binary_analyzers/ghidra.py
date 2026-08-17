@@ -107,7 +107,9 @@ class Ghidra(BinaryAnalyzer):
                 .getFileOffset()
             )
         except Exception:  # noqa: BLE001
-            raise ValueError("Can't get file offset for addr") from None
+            raise ValueError(
+                f"Memory address {hex(addr)} is not mapped to the file"
+            ) from None
 
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
         logger.info(f"getting basic block at {hex(addr)} with ghidra")
