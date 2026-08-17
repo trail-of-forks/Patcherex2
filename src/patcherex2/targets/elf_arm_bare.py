@@ -1,11 +1,10 @@
-import copy
+from collections.abc import Callable
 
 from elftools.construct.lib import Container
 
 from ..components.allocation_managers.allocation_manager import (
     AllocationManager,
     FileBlock,
-    MappedBlock,
     MemoryBlock,
     MemoryFlag,
 )
@@ -24,61 +23,77 @@ class RamBlock(MemoryBlock):
 
 class CustomAllocationManager(AllocationManager):
     def _create_new_mapped_block(
-        self, size: int, flag=MemoryFlag.RWX, align=0x1
+        self,
+        size: int,
+        flag=MemoryFlag.RWX,
+        align=0x1,
+        near_addr: int | None = None,
+        max_dist: int | None = None,
+        address_validator: Callable[[int], bool] | None = None,
     ) -> bool:
-        file_addr = None
-        virtual_mem_addr = None
-        load_mem_addr = None
-        for block in self.blocks[FileBlock]:
-            if block.size == -1:
-                file_addr = block.addr
-                block.addr += 0x10000
+        file_block = next(
+            (block for block in self.blocks[FileBlock] if block.size == -1),
+            None,
+        )
+        if file_block is None:
+            return False
+
+        file_addr = file_block.addr
+        page_align = self.p.binfmt_tool.page_alignment()
+        flash_block = next(
+            (block for block in self.blocks[FlashBlock] if block.size == -1),
+            None,
+        )
+        if flash_block is None:
+            return False
+        load_mem_addr = flash_block.addr + (file_addr - flash_block.addr) % page_align
+
         if flag == MemoryFlag.RW:
-            page_align = self.p.binfmt_tool.page_alignment()
-            for block in self.blocks[RamBlock]:
-                if block.size == -1:
-                    # mem_addr % p_align == file_addr % p_align (see `man elf`)
-                    virtual_mem_addr = (
-                        block.addr + (file_addr - block.addr) % page_align
-                    )
-                    block.addr = virtual_mem_addr + 0x10000
-            for block in self.blocks[FlashBlock]:
-                if block.size == -1:
-                    load_mem_addr = block.addr + (file_addr - block.addr) % page_align
-                    block.addr = load_mem_addr + 0x10000
-            if file_addr and load_mem_addr and virtual_mem_addr:
-                block = MappedBlock(
-                    file_addr,
-                    virtual_mem_addr,
-                    0x10000,
-                    is_free=True,
-                    flag=flag,
-                    load_mem_addr=load_mem_addr,
-                )
-                self.add_block(copy.deepcopy(block))
-                self.new_mapped_blocks.append(copy.deepcopy(block))
-                return True
+            ram_block = next(
+                (block for block in self.blocks[RamBlock] if block.size == -1),
+                None,
+            )
+            if ram_block is None:
+                return False
+            mem_addr = ram_block.addr + (file_addr - ram_block.addr) % page_align
         elif flag == MemoryFlag.RX:
-            for block in self.blocks[FlashBlock]:
-                if block.size == -1:
-                    # mem_addr % p_align == file_addr % p_align (see `man elf`)
-                    page_align = self.p.binfmt_tool.page_alignment()
-                    load_mem_addr = block.addr + (file_addr - block.addr) % page_align
-                    block.addr = load_mem_addr + 0x10000
-            if file_addr and load_mem_addr:
-                block = MappedBlock(
-                    file_addr,
-                    load_mem_addr,
-                    0x10000,
-                    is_free=True,
-                    flag=flag,
-                )
-                self.add_block(copy.deepcopy(block))
-                self.new_mapped_blocks.append(copy.deepcopy(block))
-                return True
+            mem_addr = load_mem_addr
         else:
             raise NotImplementedError("Unknown MemoryFlag")
-        return False
+
+        max_block_size = self.p.binfmt_tool.flash_end - load_mem_addr
+        if flag == MemoryFlag.RW:
+            max_block_size = min(
+                max_block_size,
+                self.p.binfmt_tool.ram_end - mem_addr,
+            )
+        if max_block_size <= 0:
+            return False
+
+        block_size = self._prospective_open_end_size(
+            mem_addr,
+            size,
+            align,
+            near_addr,
+            max_dist,
+            address_validator,
+            max_block_size,
+        )
+        if block_size is None:
+            return False
+
+        file_block.addr = file_addr + block_size
+        flash_block.addr = load_mem_addr + block_size
+        if flag == MemoryFlag.RW:
+            ram_block.addr = mem_addr + block_size
+        self._add_new_mapped_block(
+            file_addr,
+            mem_addr,
+            block_size,
+            flag,
+            load_mem_addr=load_mem_addr,
+        )
+        return True
 
 
 class CustomElf(ELF):

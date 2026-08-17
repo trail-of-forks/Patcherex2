@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import enum
 import logging
+from collections.abc import Callable, Iterator
 from itertools import pairwise
 from pprint import pformat
 
@@ -89,6 +90,7 @@ class MappedBlock(Block):
             and self.flag == other.flag
             and self.file_addr + self.size == other.file_addr
             and self.mem_addr + self.size == other.mem_addr
+            and self.load_mem_addr + self.size == other.load_mem_addr
         ):
             self.size += other.size
             return True
@@ -107,6 +109,36 @@ class AllocationManager:
         self.blocks[type(block)].append(block)
         self.blocks[type(block)].sort()
         self.coalesce(self.blocks[type(block)])
+
+    def _add_new_mapped_block(
+        self,
+        file_addr: int,
+        mem_addr: int,
+        size: int,
+        flag: MemoryFlag,
+        load_mem_addr: int | None = None,
+    ) -> None:
+        self.add_block(
+            MappedBlock(
+                file_addr,
+                mem_addr,
+                size,
+                is_free=True,
+                flag=flag,
+                load_mem_addr=load_mem_addr,
+            )
+        )
+        # finalize() needs the original extent, not the object split by allocate().
+        self.new_mapped_blocks.append(
+            MappedBlock(
+                file_addr,
+                mem_addr,
+                size,
+                is_free=True,
+                flag=flag,
+                load_mem_addr=load_mem_addr,
+            )
+        )
 
     def add_free_space(
         self, addr: int, size: int, flag: str | MemoryFlag = "RX"
@@ -149,46 +181,77 @@ class AllocationManager:
         align=0x1,
         near_addr: int | None = None,
         max_dist: int | None = None,
+        address_validator: Callable[[int], bool] | None = None,
     ) -> MappedBlock | None:
-        # Without near_addr: best-fit by size. With near_addr: closest
-        # to it. max_dist filters out too-far blocks.
-        best, best_metric = None, None
+        # near_addr ranks candidates; max_dist rejects distant ones.
+        # address_validator applies constraints that distance cannot express.
+        best: tuple[MappedBlock, int] | None = None
+        best_metric: int | None = None
         for block in self.blocks[MappedBlock]:
             if not (block.is_free and block.size >= size and block.flag & flag == flag):
                 continue
-            offset = (align - (block.mem_addr % align)) % align
-            if block.size < size + offset:
+            # Inclusive aligned range that can hold the request.
+            first = block.mem_addr + (align - block.mem_addr % align) % align
+            last_limit = block.mem_addr + block.size - size
+            last = last_limit - last_limit % align
+            if first > last:
                 continue
-            if near_addr is not None:
-                metric = abs(block.mem_addr + offset - near_addr)
-                if max_dist is not None and metric > max_dist:
+
+            # Without near_addr, scan upward from the first valid address.
+            reference_addr = first if near_addr is None else near_addr
+            allocation_addr = None
+            for _, candidate_addr in self._iter_candidates_by_distance(
+                first,
+                last,
+                reference_addr,
+                align,
+                align,
+            ):
+                if near_addr is not None:
+                    distance = abs(candidate_addr - near_addr)
+                    if max_dist is not None and distance > max_dist:
+                        break
+                if address_validator is not None and not address_validator(
+                    candidate_addr
+                ):
                     continue
-            else:
-                metric = block.size
-            if best is None or metric < best_metric:
-                best, best_metric = block, metric
+                allocation_addr = candidate_addr
+                break
+            if allocation_addr is None:
+                continue
+
+            metric = (
+                block.size if near_addr is None else abs(allocation_addr - near_addr)
+            )
+            if best_metric is None or metric < best_metric:
+                best = (block, allocation_addr)
+                best_metric = metric
 
         if best is None:
             return None
-        offset = (align - (best.mem_addr % align)) % align
-        remaining = best.size - size - offset
-        original_file_addr = best.file_addr
-        original_mem_addr = best.mem_addr
-        original_flag = best.flag
+        best_block, allocation_addr = best
+        offset = allocation_addr - best_block.mem_addr
+        remaining = best_block.size - size - offset
+        original_file_addr = best_block.file_addr
+        original_mem_addr = best_block.mem_addr
+        original_flag = best_block.flag
+        original_load_mem_addr = best_block.load_mem_addr
         allocated = MappedBlock(
             original_file_addr + offset,
-            original_mem_addr + offset,
+            allocation_addr,
             size,
             is_free=False,
             flag=original_flag,
+            load_mem_addr=original_load_mem_addr + offset,
         )
 
         if remaining == 0:
-            self.blocks[MappedBlock].remove(best)
+            self.blocks[MappedBlock].remove(best_block)
         else:
-            best.file_addr = original_file_addr + size + offset
-            best.mem_addr = original_mem_addr + size + offset
-            best.size = remaining
+            best_block.file_addr = original_file_addr + size + offset
+            best_block.mem_addr = original_mem_addr + size + offset
+            best_block.load_mem_addr = original_load_mem_addr + size + offset
+            best_block.size = remaining
         if offset > 0:
             self.add_block(
                 MappedBlock(
@@ -197,6 +260,7 @@ class AllocationManager:
                     offset,
                     is_free=True,
                     flag=original_flag,
+                    load_mem_addr=original_load_mem_addr,
                 )
             )
         self.add_block(allocated)
@@ -209,46 +273,89 @@ class AllocationManager:
         align=0x1,
         near_addr: int | None = None,
         max_dist: int | None = None,
+        address_validator: Callable[[int], bool] | None = None,
     ) -> bool:
-        # The two MappedBlocks below must be distinct objects: self.blocks
-        # gets split by subsequent allocate() calls; new_mapped_blocks
-        # keeps the original extent for finalize() to size PT_LOAD against.
         page_align = self.p.binfmt_tool.page_alignment()
 
-        if near_addr is not None:
+        if near_addr is not None or address_validator is not None:
             placement = self._reserve_in_memory_gap(
-                size, near_addr, max_dist, page_align
+                size,
+                align,
+                near_addr,
+                max_dist,
+                page_align,
+                address_validator,
             )
             if placement is not None:
                 file_addr, mem_addr, block_size = placement
-                self.add_block(
-                    MappedBlock(
-                        file_addr, mem_addr, block_size, is_free=True, flag=flag
-                    )
-                )
-                self.new_mapped_blocks.append(
-                    MappedBlock(
-                        file_addr, mem_addr, block_size, is_free=True, flag=flag
-                    )
-                )
+                self._add_new_mapped_block(file_addr, mem_addr, block_size, flag)
                 logger.debug(
-                    f"new mapped block near {hex(near_addr)}: "
-                    f"file={hex(file_addr)} mem={hex(mem_addr)} size={hex(block_size)}"
+                    f"new mapped block: file={hex(file_addr)} "
+                    f"mem={hex(mem_addr)} size={hex(block_size)}"
                 )
                 return True
         return self._extend_at_open_end(
+            size,
             flag,
+            align,
             page_align,
             near_addr=near_addr,
             max_dist=max_dist,
+            address_validator=address_validator,
         )
+
+    @staticmethod
+    def _iter_candidates_by_distance(
+        first: int,
+        last: int,
+        near_addr: int,
+        step: int,
+        align: int,
+    ) -> Iterator[tuple[int, int]]:
+        candidate_count = (last - first) // step + 1
+
+        def addresses(index: int) -> tuple[int, int]:
+            candidate = first + index * step
+            allocation_addr = candidate + (align - candidate % align) % align
+            return candidate, allocation_addr
+
+        # Find the first candidate at or above near_addr.
+        low, high = 0, candidate_count
+        while low < high:
+            middle = (low + high) // 2
+            if addresses(middle)[1] < near_addr:
+                low = middle + 1
+            else:
+                high = middle
+
+        left, right = low - 1, low
+        # Merge candidates on both sides in distance order.
+        while left >= 0 and right < candidate_count:
+            left_addresses = addresses(left)
+            right_addresses = addresses(right)
+            if abs(left_addresses[1] - near_addr) <= abs(
+                right_addresses[1] - near_addr
+            ):
+                yield left_addresses
+                left -= 1
+            else:
+                yield right_addresses
+                right += 1
+        while left >= 0:
+            yield addresses(left)
+            left -= 1
+        while right < candidate_count:
+            yield addresses(right)
+            right += 1
 
     def _reserve_in_memory_gap(
         self,
         size: int,
-        near_addr: int,
+        align: int,
+        near_addr: int | None,
         max_dist: int | None,
         page_align: int,
+        address_validator: Callable[[int], bool] | None,
     ) -> tuple[int, int, int] | None:
         # Append at file-end, then choose the closest memory address with the
         # same p_align residue. This avoids alignment padding in the file.
@@ -268,7 +375,7 @@ class AllocationManager:
             lambda _: None,
         )(file_addr)
 
-        best, best_dist = None, None
+        best, best_metric = None, None
         for mb in self.blocks[MemoryBlock]:
             if mb.size == -1 or mb.size < size:
                 continue
@@ -284,26 +391,36 @@ class AllocationManager:
             if first > last:
                 continue
 
-            steps = max(
-                0, min((near_addr - first) // page_align, (last - first) // page_align)
-            )
-            candidate = first + steps * page_align
-            next_candidate = candidate + page_align
-            if next_candidate <= last and abs(next_candidate - near_addr) < abs(
-                candidate - near_addr
+            reference_addr = first if near_addr is None else near_addr
+            # candidate is the segment start; allocation_addr includes alignment.
+            for candidate, allocation_addr in self._iter_candidates_by_distance(
+                first,
+                last,
+                reference_addr,
+                page_align,
+                align,
             ):
-                candidate = next_candidate
-            dist = abs(candidate - near_addr)
-            if max_dist is not None and dist > max_dist:
-                continue
-            if best is None or dist < best_dist:
-                best, best_dist = (mb, candidate), dist
+                required_size = allocation_addr - candidate + size
+                if candidate + required_size > mb.addr + mb.size:
+                    continue
+                if near_addr is not None:
+                    distance = abs(allocation_addr - near_addr)
+                    if max_dist is not None and distance > max_dist:
+                        break
+                if address_validator is not None and not address_validator(
+                    allocation_addr
+                ):
+                    continue
+                metric = mb.size if near_addr is None else distance
+                if best_metric is None or metric < best_metric:
+                    best, best_metric = (mb, candidate, required_size), metric
+                break
         if best is None:
             return None
 
-        mb, mem_addr = best
+        mb, mem_addr, required_size = best
         available = (mb.addr + mb.size) - mem_addr
-        block_size = min(available, self.CHUNK)
+        block_size = min(available, max(self.CHUNK, required_size))
         prefix_size = mem_addr - mb.addr
         suffix_addr = mem_addr + block_size
         suffix_size = (mb.addr + mb.size) - suffix_addr
@@ -318,12 +435,91 @@ class AllocationManager:
         file_block.addr = max(file_block.addr, file_addr + block_size)
         return (file_addr, mem_addr, block_size)
 
+    def _prospective_open_end_size(
+        self,
+        mem_addr: int,
+        size: int,
+        align: int,
+        near_addr: int | None,
+        max_dist: int | None,
+        address_validator: Callable[[int], bool] | None,
+        max_block_size: int | None = None,
+    ) -> int | None:
+        first = mem_addr + (align - mem_addr % align) % align
+        reference_addr = first if near_addr is None else near_addr
+        last_feasible = None
+        if max_block_size is not None:
+            last_limit = mem_addr + max_block_size - size
+            last_feasible = last_limit - last_limit % align
+            if first > last_feasible:
+                return None
+
+        # Finite distance limits define the complete search range. Otherwise,
+        # bound arbitrary validator calls around the closest feasible address.
+        search_center = reference_addr
+        if last_feasible is not None and max_dist is None:
+            search_center = min(max(search_center, first), last_feasible)
+        if near_addr is not None and max_dist is not None:
+            search_lower = near_addr - max_dist
+            search_upper = near_addr + max_dist
+        else:
+            search_lower = search_center - self.CHUNK
+            search_upper = max(first, search_center) + self.CHUNK
+        search_start = max(first, search_lower)
+        search_start += (align - search_start % align) % align
+        search_end = max(first, search_upper)
+        search_end -= search_end % align
+        if last_feasible is not None:
+            search_end = min(search_end, last_feasible)
+        if search_start > search_end:
+            if near_addr is not None and max_dist is not None:
+                return None
+            upper_candidate = search_start
+            search_start = max(first, search_end)
+            search_end = upper_candidate
+
+        search_ranges = [(search_start, search_end)]
+        if max_dist is None and search_start > first:
+            fallback_end = first + self.CHUNK
+            fallback_end -= fallback_end % align
+            if last_feasible is not None:
+                fallback_end = min(fallback_end, last_feasible)
+            search_ranges.append((first, fallback_end))
+
+        for range_start, range_end in search_ranges:
+            for _, allocation_addr in self._iter_candidates_by_distance(
+                range_start,
+                range_end,
+                reference_addr,
+                align,
+                align,
+            ):
+                if near_addr is not None:
+                    distance = abs(allocation_addr - near_addr)
+                    if max_dist is not None and distance > max_dist:
+                        break
+                if address_validator is not None and not address_validator(
+                    allocation_addr
+                ):
+                    continue
+                required_size = allocation_addr - mem_addr + size
+                if max_block_size is not None and required_size > max_block_size:
+                    continue
+                block_size = max(self.CHUNK, required_size)
+                if max_block_size is not None:
+                    block_size = min(block_size, max_block_size)
+                return block_size
+        return None
+
     def _extend_at_open_end(
         self,
+        size: int,
         flag,
+        align: int,
         page_align: int,
         near_addr: int | None = None,
         max_dist: int | None = None,
+        address_validator: Callable[[int], bool] | None = None,
     ) -> bool:
         # TODO: reuse finite FileBlock entries (inter-segment file slop).
         file_block = next(
@@ -339,21 +535,20 @@ class AllocationManager:
 
         file_addr = file_block.addr
         mem_addr = memory_block.addr + (file_addr - memory_block.addr) % page_align
-        if (
-            near_addr is not None
-            and max_dist is not None
-            and abs(mem_addr - near_addr) > max_dist
-        ):
+        block_size = self._prospective_open_end_size(
+            mem_addr,
+            size,
+            align,
+            near_addr,
+            max_dist,
+            address_validator,
+        )
+        if block_size is None:
             return False
 
-        file_block.addr += self.CHUNK
-        memory_block.addr = mem_addr + self.CHUNK
-        self.add_block(
-            MappedBlock(file_addr, mem_addr, self.CHUNK, is_free=True, flag=flag)
-        )
-        self.new_mapped_blocks.append(
-            MappedBlock(file_addr, mem_addr, self.CHUNK, is_free=True, flag=flag)
-        )
+        file_block.addr += block_size
+        memory_block.addr = mem_addr + block_size
+        self._add_new_mapped_block(file_addr, mem_addr, block_size, flag)
         return True
 
     def allocate(
@@ -363,8 +558,9 @@ class AllocationManager:
         align=0x1,
         near_addr: int | None = None,
         max_dist: int | None = None,
+        address_validator: Callable[[int], bool] | None = None,
     ) -> MappedBlock:
-        # near_addr: prefer blocks close to this addr (PIE PC-rel range).
+        # near_addr: prefer blocks close to this address.
         # max_dist: reject existing free blocks farther than this; falls
         # through to carving a new LOAD segment in a closer MemoryBlock.
         logger.debug(
@@ -372,14 +568,30 @@ class AllocationManager:
             + (f" near={hex(near_addr)}" if near_addr is not None else "")
             + (f" max_dist={hex(max_dist)}" if max_dist is not None else "")
         )
-        block = self._find_in_mapped_blocks(size, flag, align, near_addr, max_dist)
-        if block:
-            return block
-        if self._create_new_mapped_block(size, flag, align, near_addr, max_dist):
-            return self.allocate(
-                size, flag, align, near_addr=near_addr, max_dist=max_dist
+        created_new_block = False
+        while True:
+            block = self._find_in_mapped_blocks(
+                size,
+                flag,
+                align,
+                near_addr,
+                max_dist,
+                address_validator,
             )
-        raise MemoryError("Insufficient memory")
+            if block:
+                return block
+            if created_new_block:
+                raise RuntimeError("New mapped block cannot satisfy allocation")
+            if not self._create_new_mapped_block(
+                size,
+                flag,
+                align,
+                near_addr,
+                max_dist,
+                address_validator,
+            ):
+                raise MemoryError("Insufficient memory")
+            created_new_block = True
 
     def free(self, block: Block) -> None:
         block.is_free = True
@@ -394,21 +606,62 @@ class AllocationManager:
                 self.coalesce(blocks)
                 return
 
+    def _discard_free_mapped_range(self, start: int, end: int) -> None:
+        remaining_blocks = []
+        for block in self.blocks[MappedBlock]:
+            block_end = block.mem_addr + block.size
+            if not block.is_free or block_end <= start or block.mem_addr >= end:
+                remaining_blocks.append(block)
+                continue
+            if block.mem_addr < start:
+                remaining_blocks.append(
+                    MappedBlock(
+                        block.file_addr,
+                        block.mem_addr,
+                        start - block.mem_addr,
+                        is_free=True,
+                        flag=block.flag,
+                        load_mem_addr=block.load_mem_addr,
+                    )
+                )
+            if block_end > end:
+                offset = end - block.mem_addr
+                remaining_blocks.append(
+                    MappedBlock(
+                        block.file_addr + offset,
+                        end,
+                        block_end - end,
+                        is_free=True,
+                        flag=block.flag,
+                        load_mem_addr=block.load_mem_addr + offset,
+                    )
+                )
+        remaining_blocks.sort()
+        self.blocks[MappedBlock] = remaining_blocks
+        self.coalesce(remaining_blocks)
+
     def finalize(self) -> None:
-        # Trim each new chunk down to its actually-allocated extent: match
-        # the chunk's end_addr against a free remainder in self.blocks and
-        # shrink. The dual-instance invariant (see _create_new_mapped_block)
-        # is what makes this work.
+        allocated_blocks = [
+            block for block in self.blocks[MappedBlock] if not block.is_free
+        ]
         for block in self.new_mapped_blocks:
-            for mapped in self.blocks[MappedBlock]:
-                if (
-                    mapped.is_free
-                    and block.mem_addr + block.size == mapped.mem_addr + mapped.size
-                    and block.mem_addr <= mapped.mem_addr
-                ):
-                    self.blocks[MappedBlock].remove(mapped)
-                    block.size -= mapped.size
-                    return self.finalize()
+            block_end = block.mem_addr + block.size
+            used_end = max(
+                (
+                    min(mapped.mem_addr + mapped.size, block_end)
+                    for mapped in allocated_blocks
+                    if mapped.mem_addr < block_end
+                    and mapped.mem_addr + mapped.size > block.mem_addr
+                ),
+                default=block.mem_addr,
+            )
+            if used_end < block_end:
+                self._discard_free_mapped_range(used_end, block_end)
+            block.size = used_end - block.mem_addr
+
+        self.new_mapped_blocks = [
+            block for block in self.new_mapped_blocks if block.size > 0
+        ]
         for block in self.new_mapped_blocks:
             self.p.binfmt_tool.file_size = max(
                 self.p.binfmt_tool.file_size, block.file_addr + block.size
