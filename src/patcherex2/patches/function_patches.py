@@ -5,6 +5,8 @@ Contains patches that modify the binary at the function level.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING
 
 from ..components.allocation_managers.allocation_manager import MemoryFlag
@@ -36,7 +38,7 @@ class ModifyFunctionPatch(Patch):
 
         :param addr_or_name: The name or file address of the function.
         :param code: C code to replace the function.
-        :param detour_pos: If original function is not big enough, file address to place the given code, defaults to -1
+        :param detour_pos: If needed, memory address where the replacement is placed, defaults to -1
         :param symbols: Symbols to include when compiling, in format {symbol name: memory address}, defaults to None
         """
         self.code = code
@@ -52,53 +54,77 @@ class ModifyFunctionPatch(Patch):
         :param p: Patcherex instance.
         """
         func = p.binary_analyzer.get_function(self.addr_or_name)
-        compiled_size = len(
-            p.compiler.compile(
-                self.code,
-                symbols=self.symbols,
-                is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
-                **self.compile_opts,
-            )
+        func_addr = func["addr"]
+        is_thumb = p.binary_analyzer.is_thumb(func_addr)
+
+        compile_at = partial(
+            p.compiler.compile,
+            self.code,
+            symbols=self.symbols,
+            is_thumb=is_thumb,
+            **self.compile_opts,
         )
-        if compiled_size <= func["size"]:
-            mem_addr = func["addr"]
+
+        compiled = compile_at(func_addr)
+        if len(compiled) <= func["size"]:
+            file_addr = p.binary_analyzer.mem_addr_to_file_offset(func_addr)
+            p.binfmt_tool.update_binary_content(file_addr, compiled)
+            return
+
+        mem_addr, file_addr, compiled = self._create_detour_target(
+            p,
+            func_addr,
+            compiled,
+            compile_at,
+        )
+        self._install_detour(
+            p,
+            source_addr=func_addr,
+            target_addr=mem_addr,
+            is_thumb=is_thumb,
+        )
+        p.binfmt_tool.update_binary_content(file_addr, compiled)
+
+    def _create_detour_target(
+        self,
+        p: Patcherex,
+        source_addr: int,
+        initial_compiled: bytes,
+        compile_at: Callable[[int], bytes],
+    ) -> tuple[int, int, bytes]:
+        if self.detour_pos != -1:
+            mem_addr = self.detour_pos
+            compiled = compile_at(mem_addr)
             file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
-        else:
-            # TODO: mark the function as free (exclude jump instr)
-            if self.detour_pos == -1:
-                near_addr, max_dist = p.utils.jump_allocation_constraints(func["addr"])
-                block = p.allocation_manager.allocate(
-                    compiled_size + 0x20,
-                    align=0x4,
-                    flag=MemoryFlag.RX,
-                    near_addr=near_addr,
-                    max_dist=max_dist,
-                )
-                mem_addr = block.mem_addr
-                file_addr = block.file_addr
-            else:
-                mem_addr = self.detour_pos
-                file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
-            p.utils.validate_jump_distance(func["addr"], mem_addr)
-            jmp_instr = p.archinfo.jmp_asm.format(dst=hex(mem_addr))
-            jmp_bytes = p.assembler.assemble(
-                jmp_instr,
-                func["addr"],
-                is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
-            )
-            p.binfmt_tool.update_binary_content(
-                p.binary_analyzer.mem_addr_to_file_offset(func["addr"]),
-                jmp_bytes,
-            )
-        p.binfmt_tool.update_binary_content(
-            file_addr,
-            p.compiler.compile(
-                self.code,
-                mem_addr,
-                symbols=self.symbols,
-                is_thumb=p.binary_analyzer.is_thumb(func["addr"]),
-                **self.compile_opts,
+            return mem_addr, file_addr, compiled
+
+        block, compiled = p.utils.allocate_generated_code(
+            len(initial_compiled),
+            compile_at,
+            align=p.archinfo.alignment,
+            flag=MemoryFlag.RX,
+            allocation_options=lambda _requested_size: p.utils.jump_allocation_options(
+                source_addr
             ),
+        )
+        return block.mem_addr, block.file_addr, compiled
+
+    def _install_detour(
+        self,
+        p: Patcherex,
+        source_addr: int,
+        target_addr: int,
+        is_thumb: bool,
+    ) -> None:
+        p.utils.validate_jump_reachability(source_addr, target_addr)
+        jmp_bytes = p.assembler.assemble(
+            p.archinfo.jmp_asm.format(dst=hex(target_addr)),
+            source_addr,
+            is_thumb=is_thumb,
+        )
+        p.binfmt_tool.update_binary_content(
+            p.binary_analyzer.mem_addr_to_file_offset(source_addr),
+            jmp_bytes,
         )
 
 
@@ -125,8 +151,7 @@ class InsertFunctionPatch(Patch):
                              If a string, the function is created in a free spot in the binary with that name.
         :param code: C code for the new function. "SAVE_CONTEXT" and "RESTORE_CONTEXT" can be used to save and restore context.
         :param force_insert: If Patcherex should ignore whether instructions can be moved when inserting, defaults to False
-        :param detour_pos: If address is used, this is the address to place trampoline code for jumping to function.
-                           If name is used, this is where the new function will be placed, defaults to -1
+        :param detour_pos: Memory address for the trampoline or named function, defaults to -1
         :param symbols: Symbols to include when compiling/assembling, in format {symbol name: memory address}, defaults to None
         :param is_thumb: Whether the instructions given are thumb, defaults to False
         :param kwargs: Extra options. Can include "prefunc" and "postfunc", instructions to go before or after your function if you give an address.
@@ -155,79 +180,82 @@ class InsertFunctionPatch(Patch):
         :param p: Patcherex instance.
         """
         if self.addr is not None:
-            if self.prefunc:
-                if "SAVE_CONTEXT" in self.prefunc:
-                    self.prefunc = self.prefunc.replace(
-                        "SAVE_CONTEXT", f"\n{p.archinfo.save_context_asm}\n"
-                    )
-                if "RESTORE_CONTEXT" in self.prefunc:
-                    self.prefunc = self.prefunc.replace(
-                        "RESTORE_CONTEXT", f"\n{p.archinfo.restore_context_asm}\n"
-                    )
-            if self.postfunc:
-                if "SAVE_CONTEXT" in self.postfunc:
-                    self.postfunc = self.postfunc.replace(
-                        "SAVE_CONTEXT", f"\n{p.archinfo.save_context_asm}\n"
-                    )
-                if "RESTORE_CONTEXT" in self.postfunc:
-                    self.postfunc = self.postfunc.replace(
-                        "RESTORE_CONTEXT", f"\n{p.archinfo.restore_context_asm}\n"
-                    )
-            ifp = InsertFunctionPatch(
-                f"__patcherex_{hex(self.addr)}",
-                self.code,
-                is_thumb=p.binary_analyzer.is_thumb(self.addr),
-                symbols=self.symbols,
+            self._apply_at_address(p, self.addr)
+            return
+        if self.name:
+            self._apply_named(p, self.name)
+
+    def _apply_at_address(self, p: Patcherex, addr: int) -> None:
+        prefunc = self._expand_context_macros(p, self.prefunc)
+        postfunc = self._expand_context_macros(p, self.postfunc)
+        function_name = f"__patcherex_{hex(addr)}"
+
+        InsertFunctionPatch(
+            function_name,
+            self.code,
+            is_thumb=p.binary_analyzer.is_thumb(addr),
+            symbols=self.symbols,
+        ).apply(p)
+
+        instrs = ""
+        instrs += p.archinfo.save_context_asm if self.save_context else ""
+        instrs += prefunc
+        instrs += "\n"
+        # NOTE: This is hardcoded to bl, not blx, but it is valid for this use case.
+        instrs += p.archinfo.call_asm.format(dst=f"{{{function_name}}}")
+        instrs += "\n"
+        instrs += postfunc
+        instrs += p.archinfo.restore_context_asm if self.save_context else ""
+        p.utils.insert_trampoline_code(
+            addr,
+            instrs,
+            force_insert=self.force_insert,
+            detour_pos=self.detour_pos,
+            symbols=self.symbols,
+        )
+
+    @staticmethod
+    def _expand_context_macros(
+        p: Patcherex,
+        instrs: str | None,
+    ) -> str:
+        if not instrs:
+            return ""
+        return instrs.replace(
+            "SAVE_CONTEXT",
+            f"\n{p.archinfo.save_context_asm}\n",
+        ).replace(
+            "RESTORE_CONTEXT",
+            f"\n{p.archinfo.restore_context_asm}\n",
+        )
+
+    def _apply_named(self, p: Patcherex, name: str) -> None:
+        compile_at = partial(
+            p.compiler.compile,
+            self.code,
+            symbols=self.symbols,
+            is_thumb=self.is_thumb,
+            **self.compile_opts,
+        )
+
+        compiled = compile_at(0)
+        if self.detour_pos == -1:
+            block, compiled = p.utils.allocate_generated_code(
+                len(compiled),
+                compile_at,
+                align=p.archinfo.alignment,
+                flag=MemoryFlag.RX,
             )
-            ifp.apply(p)
-            instrs = ""
-            instrs += p.archinfo.save_context_asm if self.save_context else ""
-            instrs += self.prefunc if self.prefunc else ""
-            instrs += "\n"
-            # NOTE: ↓ this is hardcoded to bl, not blx, but it should be fine for this use case
-            instrs += p.archinfo.call_asm.format(
-                dst=f"{{__patcherex_{hex(self.addr)}}}"
-            )
-            instrs += "\n"
-            instrs += self.postfunc if self.postfunc else ""
-            instrs += p.archinfo.restore_context_asm if self.save_context else ""
-            p.utils.insert_trampoline_code(
-                self.addr,
-                instrs,
-                force_insert=self.force_insert,
-                detour_pos=self.detour_pos,
-                symbols=self.symbols,
-            )
-        elif self.name:
-            compiled_size = len(
-                p.compiler.compile(
-                    self.code,
-                    symbols=self.symbols,
-                    is_thumb=self.is_thumb,
-                    **self.compile_opts,
-                )
-            )
-            if self.detour_pos == -1:
-                block = p.allocation_manager.allocate(
-                    compiled_size + 0x20, align=p.archinfo.alignment, flag=MemoryFlag.RX
-                )  # TODO: adjust that 0x20 part
-                mem_addr = block.mem_addr
-                file_addr = block.file_addr
-            else:
-                mem_addr = self.detour_pos
-                file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
-            p.sypy_info["patcherex_added_functions"].append(hex(mem_addr))
-            p.symbols[self.name] = mem_addr
-            p.binfmt_tool.update_binary_content(
-                file_addr,
-                p.compiler.compile(
-                    self.code,
-                    mem_addr,
-                    symbols=self.symbols,
-                    is_thumb=self.is_thumb,
-                    **self.compile_opts,
-                ),
-            )
+            mem_addr = block.mem_addr
+            file_addr = block.file_addr
+        else:
+            mem_addr = self.detour_pos
+            compiled = compile_at(mem_addr)
+            file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
+
+        p.sypy_info["patcherex_added_functions"].append(hex(mem_addr))
+        p.symbols[name] = mem_addr
+        p.binfmt_tool.update_binary_content(file_addr, compiled)
 
 
 class RemoveFunctionPatch(Patch):

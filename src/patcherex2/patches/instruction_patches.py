@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from functools import partial
 from typing import TYPE_CHECKING
 
 from ..components.allocation_managers.allocation_manager import MemoryFlag
@@ -201,7 +202,7 @@ class InsertInstructionPatch(Patch):
                              If a string, the new instructions are placed in a free spot in the binary and added as a symbol (with this as its name).
         :param instr: Instructions to insert. You can use "SAVE_CONTEXT" and "RESTORE_CONTEXT" wherever you want to save and restore program context. If you want to use any symbols from the program or from previous patches, you must surround them with curly braces.
         :param force_insert: If Patcherex should ignore whether instructions can be moved when inserting, defaults to False
-        :param detour_pos: If given a name, specifies the file address to place the new instructions, defaults to -1
+        :param detour_pos: Memory address where the new instructions are placed, defaults to -1
         :param symbols: Symbols to include when assembling, in format {symbol name: memory address}, defaults to None
         :param is_thumb: Whether the instructions given are thumb, defaults to False
         :param language: The language of the patch, can be either "ASM" or "C"
@@ -422,43 +423,33 @@ class InsertInstructionPatch(Patch):
                 symbols=self.symbols,
             )
         elif self.name:
-            assembled_size = len(
-                p.assembler.assemble(
-                    self.instr, symbols=self.symbols, is_thumb=self.is_thumb
-                )
+            assemble_at = partial(
+                p.assembler.assemble,
+                self.instr,
+                symbols=self.symbols,
+                is_thumb=self.is_thumb,
             )
+
+            assembled = assemble_at(0)
             if self.detour_pos == -1:
-                block = p.allocation_manager.allocate(
-                    assembled_size, align=p.archinfo.alignment, flag=MemoryFlag.RX
+                block, assembled = p.utils.allocate_generated_code(
+                    len(assembled),
+                    assemble_at,
+                    align=p.archinfo.alignment,
+                    flag=MemoryFlag.RX,
                 )
-                p.symbols[self.name] = block.mem_addr
-                p.binfmt_tool.update_binary_content(
-                    block.file_addr,
-                    p.assembler.assemble(
-                        self.instr,
-                        block.mem_addr,
-                        symbols=self.symbols,
-                        is_thumb=self.is_thumb,
-                    ),
-                )
+                mem_addr = block.mem_addr
+                file_addr = block.file_addr
             else:
-                p.symbols[self.name] = self.detour_pos
-                p.binfmt_tool.update_binary_content(
-                    self.detour_pos,
-                    p.assembler.assemble(
-                        self.instr,
-                        self.detour_pos,
-                        symbols=self.symbols,
-                        is_thumb=self.is_thumb,
-                    ),
-                )
+                mem_addr = self.detour_pos
+                assembled = assemble_at(mem_addr)
+                file_addr = p.binary_analyzer.mem_addr_to_file_offset(mem_addr)
+            p.symbols[self.name] = mem_addr
+            p.binfmt_tool.update_binary_content(file_addr, assembled)
 
 
 class RemoveInstructionPatch(Patch):
-    """
-    Patch that removes instructions in the binary. Currently only takes in a number of bytes and an starting address.
-    The number of bytes must be divisible by the nop size of the architecture, otherwise it will fail.
-    """
+    """Replaces a decoded instruction count or an exact byte range with NOPs."""
 
     def __init__(
         self,
@@ -467,15 +458,15 @@ class RemoveInstructionPatch(Patch):
         num_bytes: int | None = None,
     ) -> None:
         """
-        Constructor.
-
-        :param addr: Memory address to remove instructions at.
-        :param num_instr: Number of instructions to remove, currently not used, defaults to None
-        :param num_bytes: Number of bytes to remove, must be divisible by nop size, defaults to None
+        :param addr: Memory address of the first byte.
+        :param num_instr: Number of complete decoded instructions to remove.
+        :param num_bytes: Exact number of bytes to remove. The range must fit whole NOPs.
         """
         self.addr = addr
         self.num_instr = num_instr
         self.num_bytes = num_bytes
+        if self.num_instr is not None and self.num_bytes is not None:
+            raise ValueError("Specify either num_instr or num_bytes, not both")
         if self.num_instr is None and self.num_bytes is None:
             self.num_instr = 1
 
@@ -485,12 +476,21 @@ class RemoveInstructionPatch(Patch):
 
         :param p: Patcherex instance.
         """
-        if self.num_bytes is None:
-            raise NotImplementedError()
-        if self.num_bytes and self.num_bytes % p.archinfo.nop_size != 0:
-            raise ValueError(
-                f"Cannot remove {self.num_bytes} bytes, must be a multiple of {p.archinfo.nop_size}"
+        num_bytes = self.num_bytes
+        if num_bytes is None:
+            if self.num_instr is None or self.num_instr <= 0:
+                raise ValueError("num_instr must be positive")
+            num_bytes = len(
+                p.binary_analyzer.get_instr_bytes_at(
+                    self.addr,
+                    num_instr=self.num_instr,
+                )
             )
-        num_nops = self.num_bytes // p.archinfo.nop_size
+        if num_bytes <= 0 or num_bytes % p.archinfo.nop_size != 0:
+            raise ValueError(
+                f"Cannot remove {num_bytes} bytes, must be a positive "
+                f"multiple of {p.archinfo.nop_size}"
+            )
+        num_nops = num_bytes // p.archinfo.nop_size
         offset = p.binary_analyzer.mem_addr_to_file_offset(self.addr)
         p.binfmt_tool.update_binary_content(offset, p.archinfo.nop_bytes * num_nops)
