@@ -32,6 +32,10 @@ BIN_LOCATION = os.path.join(
 EXTERN_DATA_CODE = (
     "extern char g_auth_token[128]; char *f(void) { return g_auth_token; }"
 )
+DEFAULT_VISIBILITY_EXTERN_DATA_CODE = """
+extern char g_auth_token[128] __attribute__((visibility("default")));
+char *f(void) { return g_auth_token; }
+"""
 C_CODE = "int f(int x) { return x + 1; }"
 TARGETS = [
     (ElfAmd64Linux, "amd64/printf_nopie"),
@@ -167,6 +171,42 @@ class TestCompiledObjectArch:
         path = os.path.join(BIN_LOCATION, binary)
         patcherex = CompileOnlyPatcherex(target_cls, path)
         assert patcherex.target.get_compiler(None).compile(C_CODE)
+
+    @pytest.mark.parametrize(
+        "target_cls",
+        [ElfAmd64Linux, ElfAmd64LinuxRecomp],
+    )
+    def test_pie_compiles_direct_fixed_symbol_reference(self, target_cls):
+        path = os.path.join(BIN_LOCATION, "amd64/printf_pie")
+        patcherex = CompileOnlyPatcherex(target_cls, path)
+        patcherex.symbols["g_auth_token"] = 0x2007
+
+        compiled = patcherex.target.get_compiler(None).compile(EXTERN_DATA_CODE)
+        instructions = patcherex.disassembler.disassemble(compiled)
+
+        assert any(
+            instruction["mnemonic"] == "lea"
+            and "[rip + " in instruction["op_str"]
+            and instruction["address"]
+            + instruction["size"]
+            + int(instruction["op_str"].rsplit("+ ", 1)[1].rstrip("]"), 16)
+            == 0x2007
+            for instruction in instructions
+        )
+
+    @pytest.mark.parametrize(
+        "target_cls",
+        [ElfAmd64Linux, ElfAmd64LinuxRecomp],
+    )
+    def test_pie_rejects_residual_got_reference(self, target_cls):
+        path = os.path.join(BIN_LOCATION, "amd64/printf_pie")
+        patcherex = CompileOnlyPatcherex(target_cls, path)
+        patcherex.symbols["g_auth_token"] = 0x2007
+
+        with pytest.raises(UnsupportedRelocationError, match="g_auth_token"):
+            patcherex.target.get_compiler(None).compile(
+                DEFAULT_VISIBILITY_EXTERN_DATA_CODE
+            )
 
     def test_fixed_recomp_embeds_absolute_external_data_address(self):
         path = os.path.join(BIN_LOCATION, "amd64/printf_nopie")

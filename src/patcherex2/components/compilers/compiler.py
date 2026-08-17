@@ -26,6 +26,8 @@ class UnsupportedRelocationError(RuntimeError):
 
 
 class Compiler:
+    _NON_PREEMPTIBLE_SOURCE_HEADER = "#pragma GCC visibility push(hidden)\n"
+
     def __init__(self, p) -> None:
         self.p = p
         # preserve_none is a special attribute flag to allow us to control more registers as input to a C function
@@ -99,10 +101,7 @@ class Compiler:
         return flags
 
     def check_got_relocations(self, elf, defined_symbols: set[str]) -> None:
-        """Reject fixed-address relocations that treat absolute symbols as pointers."""
-        if self.p.binfmt_tool.is_position_independent:
-            return
-
+        """Reject fixed-address relocations that require a GOT."""
         relocation_enum_names = {
             "EM_X86_64": "x64",
             "EM_386": "i386",
@@ -132,9 +131,16 @@ class Compiler:
                     relocation.entry.r_info_type,
                     f"type {relocation.entry.r_info_type}",
                 )
-                if "GOT" in relocation_name or (
-                    elf.header["e_machine"] == "EM_PPC64"
-                    and section.name.endswith(".toc")
+                if (
+                    "GOT" in relocation_name
+                    or (
+                        elf.header["e_machine"] == "EM_386"
+                        and relocation.entry.r_info_type == 43  # R_386_GOT32X
+                    )
+                    or (
+                        elf.header["e_machine"] == "EM_PPC64"
+                        and section.name.endswith(".toc")
+                    )
                 ):
                     invalid.add((symbol.name, relocation_name, section.name))
 
@@ -160,6 +166,8 @@ class Compiler:
             symbols = {}
         if extra_compiler_flags is None:
             extra_compiler_flags = []
+        if self.p.binfmt_tool.is_position_independent:
+            code = self._NON_PREEMPTIBLE_SOURCE_HEADER + code
         compiler_flags = (
             tuple(self._compiler_flags)
             + tuple(self.pic_compiler_flags())

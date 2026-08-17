@@ -36,6 +36,8 @@ class LLVMRecomp(Clang):
             symbols = {}
         if extra_compiler_flags is None:
             extra_compiler_flags = []
+        if self.p.binfmt_tool.is_position_independent:
+            code = self._NON_PREEMPTIBLE_SOURCE_HEADER + code
         llc_relocation_flag = (
             "-relocation-model=pic"
             if self.p.binfmt_tool.is_position_independent
