@@ -1,4 +1,7 @@
-class X86Info:
+from .base import ArchInfo
+
+
+class X86Info(ArchInfo):
     elf_arch = {
         "e_machine": "EM_386",
         "ei_class": "ELFCLASS32",

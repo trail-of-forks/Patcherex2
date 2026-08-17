@@ -1,4 +1,7 @@
-class Riscv32Info:
+from .base import ArchInfo
+
+
+class Riscv32Info(ArchInfo):
     elf_arch = {
         "e_machine": "EM_RISCV",
         "ei_class": "ELFCLASS32",

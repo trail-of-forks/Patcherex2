@@ -4,6 +4,8 @@ import pytest
 
 from patcherex2.components.allocation_managers.allocation_manager import MemoryFlag
 from patcherex2.components.archinfo.aarch64 import Aarch64Info
+from patcherex2.components.archinfo.mips import MipsInfo
+from patcherex2.components.archinfo.mips64 import Mips64Info
 from patcherex2.components.utils.utils import InvalidInsertPointError, Utils
 from patcherex2.patches.function_patches import ModifyFunctionPatch
 
@@ -18,6 +20,27 @@ class RecordingAllocationManager:
 
     def free(self, block):
         raise AssertionError(f"unexpected free of {block}")
+
+
+def test_aarch64_jump_reachability_matches_direct_branch_range():
+    source_addr = 0x1000
+    max_forward_distance = ((1 << 25) - 1) * 4
+
+    assert Aarch64Info.jmp_max_distance == max_forward_distance
+    assert Aarch64Info.is_jump_reachable(
+        source_addr, source_addr + max_forward_distance
+    )
+    assert not Aarch64Info.is_jump_reachable(
+        source_addr, source_addr + max_forward_distance + 4
+    )
+
+
+@pytest.mark.parametrize("archinfo", [MipsInfo, Mips64Info])
+def test_mips_jump_reachability_uses_the_pc_plus_four_region(archinfo):
+    source_addr = 0x0FFFFFFC
+
+    assert archinfo.is_jump_reachable(source_addr, 0x10000000)
+    assert not archinfo.is_jump_reachable(source_addr, 0x0FFFFFFC)
 
 
 def test_trampoline_allocation_enforces_architecture_jump_range():

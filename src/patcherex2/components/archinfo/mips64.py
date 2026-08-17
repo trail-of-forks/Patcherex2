@@ -1,4 +1,7 @@
-class Mips64Info:
+from .base import ArchInfo
+
+
+class Mips64Info(ArchInfo):
     elf_arch = {
         "e_machine": "EM_MIPS",
         "ei_class": "ELFCLASS64",
@@ -14,6 +17,11 @@ class Mips64Info:
     is_variable_length_isa = False
     instr_size = 4
     call_asm = "jal {dst}"
+
+    @staticmethod
+    def is_jump_reachable(source_addr: int, target_addr: int) -> bool:
+        return ((source_addr + 4) & ~0x0FFFFFFF) == (target_addr & ~0x0FFFFFFF)
+
     pc_reg_names = ["pc"]
     save_context_asm = """
     sub $sp, $sp, -248

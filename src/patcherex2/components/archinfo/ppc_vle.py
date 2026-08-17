@@ -1,4 +1,7 @@
-class PpcVleInfo:
+from .base import ArchInfo
+
+
+class PpcVleInfo(ArchInfo):
     elf_arch = {
         "e_machine": "EM_PPC",
         "ei_class": "ELFCLASS32",

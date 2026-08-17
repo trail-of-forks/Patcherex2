@@ -1,4 +1,7 @@
-class Aarch64Info:
+from .base import ArchInfo
+
+
+class Aarch64Info(ArchInfo):
     elf_arch = {
         "e_machine": "EM_AARCH64",
         "ei_class": "ELFCLASS64",

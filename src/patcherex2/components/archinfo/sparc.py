@@ -1,4 +1,7 @@
-class SparcInfo:
+from .base import ArchInfo
+
+
+class SparcInfo(ArchInfo):
     elf_arch = {
         "e_machine": "EM_SPARC",
         "ei_class": "ELFCLASS32",

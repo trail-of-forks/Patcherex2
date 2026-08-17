@@ -1,4 +1,7 @@
-class S390xInfo:
+from .base import ArchInfo
+
+
+class S390xInfo(ArchInfo):
     elf_arch = {
         "e_machine": "EM_S390",
         "ei_class": "ELFCLASS64",
