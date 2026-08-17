@@ -2,22 +2,6 @@ from __future__ import annotations
 
 import logging
 
-from .patches import (
-    InsertDataPatch,
-    InsertFunctionPatch,
-    InsertInstructionPatch,
-    InsertLabelPatch,
-    ModifyDataPatch,
-    ModifyFunctionPatch,
-    ModifyInstructionPatch,
-    ModifyLabelPatch,
-    ModifyRawBytesPatch,
-    RemoveDataPatch,
-    RemoveFunctionPatch,
-    RemoveInstructionPatch,
-    RemoveLabelPatch,
-)
-from .patches import __all__ as all_patches
 from .targets import Target
 
 logging.Logger.manager.loggerDict["patcherex"] = logging.Logger.manager.loggerDict[
@@ -82,24 +66,6 @@ class Patcherex:
                 ),
             )
 
-        # Chosen patch order, making sure all are accounted for
-        self.patch_order = (
-            ModifyRawBytesPatch,
-            RemoveDataPatch,
-            InsertDataPatch,
-            ModifyDataPatch,
-            RemoveLabelPatch,
-            ModifyLabelPatch,
-            InsertLabelPatch,
-            RemoveInstructionPatch,
-            InsertInstructionPatch,
-            ModifyInstructionPatch,
-            RemoveFunctionPatch,
-            InsertFunctionPatch,
-            ModifyFunctionPatch,
-        )
-        assert len(self.patch_order) == len(all_patches)
-
     def shutdown(self):
         """
         Required when using Ghidra (which spawns a JVM via pyghidra).
@@ -123,18 +89,6 @@ class Patcherex:
         """
         Applies all added patches to the binary. Call this when you have added all the patches you want.
         """
-
-        # data/labels first, then instructions, then functions
-        def _sort_key(patch):
-            try:
-                return self.patch_order.index(type(patch))
-            except ValueError as e:
-                raise ValueError(
-                    f"Unknown patch type {type(patch).__name__!r}; "
-                    f"register it in Patcherex.patch_order"
-                ) from e
-
-        self.patches.sort(key=_sort_key)
         logger.debug(f"Applying patches: {self.patches}")
         for patch in self.patches:
             patch.apply(self)
