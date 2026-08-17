@@ -221,7 +221,7 @@ def test_trampoline_allocation_reassembles_until_final_bytes_fit():
 def test_relocated_branch_is_rejected_when_assembler_wraps_target():
     patcher = SimpleNamespace(
         symbols={},
-        binary_analyzer=SimpleNamespace(get_all_symbols=lambda: {}),
+        binary_analyzer=SimpleNamespace(get_all_symbols=dict),
     )
     target = ElfAArch64Linux(patcher, "unused")
     patcher.assembler = target.get_assembler(None)

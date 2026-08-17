@@ -115,7 +115,7 @@ class Utils:
         is_thumb = self.p.binary_analyzer.is_thumb(addr)
         if language != "C":
             patch_bytes = b""
-            tail_source = "\n".join((instrs, moved_instrs, jump_back_instr))
+            tail_source = f"{instrs}\n{moved_instrs}\n{jump_back_instr}"
         else:
             compiled_asm_header = self.p.assembler.assemble(
                 asm_header,
@@ -145,7 +145,7 @@ class Utils:
                     f"memory address {hex(mem_addr)}"
                 )
             patch_bytes = compiled_asm_header + compiled_code
-            tail_source = "\n".join((asm_footer, moved_instrs, jump_back_instr))
+            tail_source = f"{asm_footer}\n{moved_instrs}\n{jump_back_instr}"
 
         tail_addr = mem_addr + len(patch_bytes)
         tail_bytes = self.p.assembler.assemble(
