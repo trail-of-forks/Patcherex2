@@ -81,6 +81,10 @@ class Ida(BinaryAnalyzer):
     def get_basic_block(self, addr: int) -> dict[str, int | list[int]]:
         addr = self.denormalize_addr(addr)
         func = self.ida_funcs.get_func(addr)
+        if func is None:
+            raise ValueError(
+                f"address {addr:#x} is not inside an IDA-recognized function"
+            )
         instr_addrs = list(func.code_items())
         assert addr in instr_addrs, "Invalid address"
         flowchart = self.ida_gdl.FlowChart(f=func, flags=self.ida_gdl.FC_PREDS)

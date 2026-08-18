@@ -3,6 +3,7 @@ from ..components.archinfo.ppc64 import Ppc64leInfo
 from ..components.assemblers.keystone import Keystone, keystone
 from ..components.binary_analyzers.angr import Angr
 from ..components.binary_analyzers.ghidra import Ghidra
+from ..components.binary_analyzers.ida import Ida
 from ..components.binfmt_tools.elf import ELF
 from ..components.compilers.clang import Clang
 from ..components.disassemblers.capstone import Capstone, capstone
@@ -65,6 +66,8 @@ class ElfPpc64leLinux(Target):
         binary_analyzer = binary_analyzer or "angr"
         if binary_analyzer == "angr":
             return Angr(self.binary_path, **kwargs)
+        if binary_analyzer == "ida":
+            return Ida(self.binary_path, **kwargs)
         if binary_analyzer == "ghidra":
             return Ghidra(self.binary_path, **kwargs)
         raise NotImplementedError()
