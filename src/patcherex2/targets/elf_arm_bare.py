@@ -24,8 +24,18 @@ class RamBlock(MemoryBlock):
 
 class CustomAllocationManager(AllocationManager):
     def _create_new_mapped_block(
-        self, size: int, flag=MemoryFlag.RWX, align=0x1
+        self,
+        size: int,
+        flag=MemoryFlag.RWX,
+        align=0x1,
+        near_addr: int | None = None,
+        max_dist: int | None = None,
     ) -> bool:
+        # near_addr/max_dist are accepted to match the base signature but are
+        # not honored: placement here is fixed by the flash/RAM block layout.
+        # Both are None for this target today -- the only caller that sets
+        # near_addr (Utils.insert_trampoline_code) does so only for
+        # PIE binaries, and bare-metal images are ET_EXEC.
         file_addr = None
         virtual_mem_addr = None
         load_mem_addr = None
