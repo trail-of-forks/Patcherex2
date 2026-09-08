@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import capstone
-
-from .disassembler import Disassembler
+from patcherex2.components.disassemblers.capstone_api import create_capstone
+from patcherex2.components.disassemblers.disassembler import Disassembler, Instruction
 
 
 class Capstone(Disassembler):
     def __init__(self, arch: int, mode: int) -> None:
-        self.cs = capstone.Cs(arch, mode)
+        self.cs = create_capstone(arch, mode)
 
-    def disassemble(self, input: bytes, base=0, **kwargs) -> list[dict[str, int | str]]:
+    def disassemble(self, input: bytes, base=0, **kwargs) -> list[Instruction]:
         cs_insns = self.cs.disasm(input, base)
-        result = []
+        result: list[Instruction] = []
         for insn in cs_insns:
             result.append(
                 {

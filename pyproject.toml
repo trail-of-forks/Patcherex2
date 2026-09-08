@@ -11,6 +11,7 @@ dependencies = [
     "angr",
     "pyelftools",
     "pypcode",
+    "pydantic==2.13.5",
     "lief",
     "keystone-engine",
     "intelhex",
@@ -20,7 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ghidra = ["pyghidra>=3.0"]
-ida = ["headless-ida"]
+ida = ["idapro>=0.0.10"]
 all = ["patcherex2[ghidra]", "patcherex2[ida]"]
 
 [project.urls]
@@ -32,6 +33,7 @@ all = ["patcherex2[ghidra]", "patcherex2[ida]"]
 where = ["src"]
 
 [tool.ruff]
+line-length = 100
 exclude = ["examples"]
 
 [tool.ruff.lint]

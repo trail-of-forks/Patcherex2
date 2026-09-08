@@ -1,20 +1,30 @@
-from __future__ import annotations
+from collections.abc import Sequence
+from typing import final
 
-import logging
-
-from .compiler import Compiler
-
-logger = logging.getLogger(__name__)
+from patcherex2.components.command_runner import DEFAULT_COMMAND_RUNNER, CommandRunner
+from patcherex2.components.compilers.command import CommandObjectCompiler
 
 
-class Clang(Compiler):
+@final
+class ClangObjectCompiler(CommandObjectCompiler):
+    """Compile objects with a versioned Clang and its matching capabilities."""
+
     def __init__(
-        self, p, clang_version=15, compiler_flags: list[str] | None = None
+        self,
+        version: int,
+        compiler_flags: Sequence[str],
+        position_independent: bool,
+        non_pic_compiler_flags: Sequence[str],
+        *,
+        command_runner: CommandRunner = DEFAULT_COMMAND_RUNNER,
     ) -> None:
-        super().__init__(p)
-        self.preserve_none = clang_version >= 19
-        if compiler_flags is None:
-            compiler_flags = []
-        self._compiler = f"clang-{clang_version}"
-        self._linker = f"ld.lld-{clang_version}"
-        self._compiler_flags = compiler_flags
+        self.version = version
+        self.linker = f"ld.lld-{version}"
+        super().__init__(
+            f"clang-{version}",
+            compiler_flags,
+            position_independent,
+            non_pic_compiler_flags,
+            preserve_none=version >= 19,
+            command_runner=command_runner,
+        )

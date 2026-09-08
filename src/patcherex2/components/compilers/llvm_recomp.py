@@ -3,231 +3,200 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
+import sys
 import tempfile
+from collections.abc import Sequence
+from pathlib import Path
+from subprocess import CalledProcessError
+from typing import Any, final
 
-import cle
-from elftools.elf.elffile import ELFFile
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
-from ..assets.assets import Assets
-from .clang import Clang
+from patcherex2.components.assets import DEFAULT_ASSET_RESOLVER, AssetResolver
+from patcherex2.components.command_runner import DEFAULT_COMMAND_RUNNER, CommandRunner
+from patcherex2.components.compilers import ObjectCompiler
 
 logger = logging.getLogger(__name__)
 
 
-class LLVMRecomp(Clang):
-    def __init__(
-        self, p, clang_version=15, compiler_flags: list[str] | None = None
-    ) -> None:
-        super().__init__(p, clang_version, compiler_flags)
-        self._clang_version = clang_version
-        self._assets_path = Assets("llvm_recomp").path
+@final
+class LLVMRecompObjectCompiler(ObjectCompiler):
+    """Produce relocatable objects through the LLVM recompilation pipeline."""
 
-    def compile(
+    _NON_PREEMPTIBLE_SOURCE_HEADER = "#pragma GCC visibility push(hidden)\n"
+    preserve_none = False
+
+    def __init__(
+        self,
+        version: int,
+        compiler_flags: Sequence[str],
+        position_independent: bool,
+        non_pic_compiler_flags: Sequence[str] = (),
+        *,
+        asset_resolver: AssetResolver = DEFAULT_ASSET_RESOLVER,
+        command_runner: CommandRunner = DEFAULT_COMMAND_RUNNER,
+    ) -> None:
+        self.version = version
+        self.compiler = f"clang-{version}"
+        self.linker = f"ld.lld-{version}"
+        self.compiler_flags: tuple[str, ...] = tuple(compiler_flags)
+        self.position_independent: bool = position_independent
+        self.non_pic_compiler_flags: tuple[str, ...] = tuple(non_pic_compiler_flags)
+        self.assets_path: str | Path = asset_resolver.resolve("llvm_recomp")
+        self.command_runner = command_runner
+
+    @override
+    def compile_object(
         self,
         code: str,
-        base=0,
-        symbols: dict[str, int] | None = None,
+        extension: str = ".c",
         extra_compiler_flags: list[str] | None = None,
-        is_thumb=False,
-        **kwargs,
+        **kwargs: Any,
     ) -> bytes:
-        if symbols is None:
-            symbols = {}
-        if extra_compiler_flags is None:
-            extra_compiler_flags = []
-        if self.p.binfmt_tool.is_position_independent:
+        """Compile C through the recompiler passes into a relocatable object."""
+        if extension != ".c":
+            raise ValueError("LLVM recompilation only accepts C source")
+        if self.position_independent:
             code = self._NON_PREEMPTIBLE_SOURCE_HEADER + code
-        llc_relocation_flag = (
-            "-relocation-model=pic"
-            if self.p.binfmt_tool.is_position_independent
-            else "-relocation-model=static"
-        )
-        with tempfile.TemporaryDirectory() as td:
-            # source file
-            with open(os.path.join(td, "code.c"), "w") as f:
-                f.write(code)
-
-            librecomp_path = os.path.join(self._assets_path, "libRecompiler.so")
-
-            # c -> ll
-            try:
-                args = (
-                    [self._compiler]
-                    + self._compiler_flags
-                    + self.pic_compiler_flags()
-                    + extra_compiler_flags
-                    + [
-                        "-Wno-incompatible-library-redeclaration",
-                        "-S",
-                        "-w",
-                        "-emit-llvm",
-                        "-g",
-                        "-o",
-                        os.path.join(td, "code.ll"),
-                        os.path.join(td, "code.c"),
-                        "-I/usr/lib/clang/15/include",
-                    ]
-                )
-                subprocess.run(args, check=True, capture_output=True)
-            except subprocess.CalledProcessError as e:
-                logger.error(e.stderr.decode("utf-8"))
-                raise
-
-            # ll --force-dso-local --> ll
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "code.c")
+            llvm_path = os.path.join(directory, "code.ll")
+            object_path = os.path.join(directory, "obj.o")
+            with open(source_path, "w") as stream:
+                stream.write(code)
+            self._compile_llvm(source_path, llvm_path, extra_compiler_flags)
             if kwargs.get("dso_local_fix"):
-                try:
-                    args = [
-                        f"opt-{self._clang_version}",
-                        f"-load-pass-plugin={librecomp_path}",
-                        "-passes=force-dso-local",
-                        "-S",
-                        os.path.join(td, "code.ll"),
-                        "-o",
-                        os.path.join(td, "code.ll"),
-                    ]
-                    subprocess.run(args, check=True, capture_output=True)
-                except subprocess.CalledProcessError as e:
-                    logger.error(e.stderr.decode("utf-8"))
-                    raise
-
-            # ll -> o
-            if kwargs.get("stacklayout"):
-                with open(os.path.join(td, "stacklayout.json"), "w") as f:
-                    json.dump(kwargs["stacklayout"], f)
-                try:
-                    args = [
-                        f"llc-{self._clang_version}",
-                        "-stop-before=prologepilog",
-                        os.path.join(td, "code.ll"),
-                        "-o",
-                        os.path.join(td, "code.mir"),
-                        llc_relocation_flag,
-                    ]
-                    subprocess.run(args, check=True, capture_output=True)
-                except subprocess.CalledProcessError as e:
-                    logger.error(e.stderr.decode("utf-8"))
-                    raise
-                try:
-                    args = [
-                        f"llc-{self._clang_version}",
-                        "-load",
-                        librecomp_path,
-                        "-run-pass=updated-prologepilog",
-                        f"-stkloc={os.path.join(td, 'stacklayout.json')}",
-                        "-o",
-                        os.path.join(td, "code.2.mir"),
-                        os.path.join(td, "code.mir"),
-                        llc_relocation_flag,
-                    ]
-                    subprocess.run(args, check=True, capture_output=True)
-                except subprocess.CalledProcessError as e:
-                    logger.error(e.stderr.decode("utf-8"))
-                    raise
-                try:
-                    args = [
-                        f"llc-{self._clang_version}",
-                        "-start-after=prologepilog",
-                        "-o",
-                        os.path.join(td, "obj.o"),
-                        os.path.join(td, "code.2.mir"),
-                        llc_relocation_flag,
-                        "--filetype=obj",
-                    ]
-                    subprocess.run(args, check=True, capture_output=True)
-                except subprocess.CalledProcessError as e:
-                    logger.error(e.stderr.decode("utf-8"))
-                    raise
+                self._force_dso_local(llvm_path)
+            stack_layout = kwargs.get("stacklayout")
+            if stack_layout is None:
+                self._compile_object(llvm_path, object_path)
             else:
-                try:
-                    args = [
-                        f"llc-{self._clang_version}",
-                        "-o",
-                        os.path.join(td, "obj.o"),
-                        os.path.join(td, "code.ll"),
-                        llc_relocation_flag,
-                        "--filetype=obj",
-                    ]
-                    subprocess.run(args, check=True, capture_output=True)
-                except subprocess.CalledProcessError as e:
-                    logger.error(e.stderr.decode("utf-8"))
-                    raise
-
-            # linker script
-            _symbols = {}
-            _symbols.update(self.p.symbols)
-            _symbols.update(
-                {
-                    name: symbol.addr
-                    for name, symbol in self.p.binary_analyzer.get_all_symbols().items()
-                }
-            )
-            _symbols.update(symbols)
-
-            with open(os.path.join(td, "obj.o"), "rb") as f:
-                elf = ELFFile(f)
-                self.check_got_relocations(elf, set(_symbols))
-                self.check_object_arch(elf)
-                linker_script_rodata_sections = " ".join(
-                    [
-                        f". = ALIGN({section['sh_addralign']}); *({section.name})"
-                        for section in elf.iter_sections()
-                        if section.name.startswith(".rodata")
-                    ]
+                self._compile_object_with_stack_layout(
+                    llvm_path,
+                    object_path,
+                    directory,
+                    stack_layout,
                 )
+            with open(object_path, "rb") as stream:
+                return stream.read()
 
-                # automatically add symbols like off_deadbeef, dword_deadbeef, etc.
-                for sym in elf.get_section_by_name(".symtab").iter_symbols():
-                    if (
-                        sym.entry.st_shndx == "SHN_UNDEF"
-                        and sym.name
-                        and "_" in sym.name
-                    ):
-                        try:
-                            _, addr = sym.name.split("_", 1)
-                            addr = int(addr, 16)
-                            if sym.name not in _symbols:
-                                _symbols[sym.name] = addr
-                        except ValueError:
-                            pass
-            linker_script_symbols = "".join(
-                f"{name} = {hex(addr)};"
-                for name, addr in self.linker_script_symbols(_symbols).items()
-            )
+    def _compile_llvm(
+        self,
+        source_path: str,
+        llvm_path: str,
+        extra_compiler_flags: list[str] | None,
+    ) -> None:
+        self._run(
+            [
+                self.compiler,
+                *self.compiler_flags,
+                *self.position_flags(),
+                *(extra_compiler_flags or ()),
+                "-Wno-incompatible-library-redeclaration",
+                "-S",
+                "-w",
+                "-emit-llvm",
+                "-g",
+                "-o",
+                llvm_path,
+                source_path,
+                "-I/usr/lib/clang/15/include",
+            ]
+        )
 
-            linker_script = f"SECTIONS {{ .patcherex2 : SUBALIGN(0) {{ . = {hex(base)}; *(.text) {linker_script_rodata_sections} {linker_script_symbols} }} }}"
-            with open(os.path.join(td, "linker.ld"), "w") as f:
-                f.write(linker_script)
+    def _force_dso_local(self, llvm_path: str) -> None:
+        self._run(
+            [
+                f"opt-{self.version}",
+                f"-load-pass-plugin={self._recompiler_library}",
+                "-passes=force-dso-local",
+                "-S",
+                llvm_path,
+                "-o",
+                llvm_path,
+            ]
+        )
 
-            # link object file
-            try:
-                args = [self._linker] + [
-                    "-relocatable",
-                    os.path.join(td, "obj.o"),
-                    "-T",
-                    os.path.join(td, "linker.ld"),
-                    "-o",
-                    os.path.join(td, "obj_linked.o"),
-                ]
-                subprocess.run(args, check=True, capture_output=True)
-            except subprocess.CalledProcessError as e:
-                logger.error(e.stderr.decode("utf-8"))
-                raise
-            with open(os.path.join(td, "obj_linked.o"), "rb") as f:
-                self.check_undefined_symbols(ELFFile(f))
+    def _compile_object(self, llvm_path: str, object_path: str) -> None:
+        self._run(
+            [
+                f"llc-{self.version}",
+                "-o",
+                object_path,
+                llvm_path,
+                self._relocation_flag,
+                "--filetype=obj",
+            ]
+        )
 
-            # extract compiled code
-            ld = cle.Loader(
-                os.path.join(td, "obj_linked.o"), main_opts={"base_addr": 0x0}
-            )
+    def _compile_object_with_stack_layout(
+        self,
+        llvm_path: str,
+        object_path: str,
+        directory: str,
+        stack_layout: Any,
+    ) -> None:
+        layout_path = os.path.join(directory, "stacklayout.json")
+        first_mir_path = os.path.join(directory, "code.mir")
+        second_mir_path = os.path.join(directory, "code.2.mir")
+        with open(layout_path, "w") as stream:
+            json.dump(stack_layout, stream)
+        self._run(
+            [
+                f"llc-{self.version}",
+                "-stop-before=prologepilog",
+                llvm_path,
+                "-o",
+                first_mir_path,
+                self._relocation_flag,
+            ]
+        )
+        self._run(
+            [
+                f"llc-{self.version}",
+                "-load",
+                self._recompiler_library,
+                "-run-pass=updated-prologepilog",
+                f"-stkloc={layout_path}",
+                "-o",
+                second_mir_path,
+                first_mir_path,
+                self._relocation_flag,
+            ]
+        )
+        self._run(
+            [
+                f"llc-{self.version}",
+                "-start-after=prologepilog",
+                "-o",
+                object_path,
+                second_mir_path,
+                self._relocation_flag,
+                "--filetype=obj",
+            ]
+        )
 
-            patcherex2_section = next(
-                (s for s in ld.main_object.sections if s.name == ".patcherex2"), None
-            )
-            compiled_start = ld.all_objects[0].entry + base
+    @property
+    def _recompiler_library(self) -> str:
+        return os.path.join(self.assets_path, "libRecompiler.so")
 
-            compiled = ld.memory.load(
-                compiled_start,
-                patcherex2_section.memsize - compiled_start,
-            )
-        return compiled
+    @property
+    def _relocation_flag(self) -> str:
+        model = "pic" if self.position_independent else "static"
+        return f"-relocation-model={model}"
+
+    def position_flags(self) -> tuple[str, ...]:
+        """Return flags appropriate for the target's position model."""
+        if self.position_independent:
+            return ()
+        return ("-fno-pic", *self.non_pic_compiler_flags)
+
+    def _run(self, args: list[str]) -> None:
+        try:
+            self.command_runner.run(args)
+        except CalledProcessError as error:
+            logger.error(error.stderr.decode("utf-8"))
+            raise

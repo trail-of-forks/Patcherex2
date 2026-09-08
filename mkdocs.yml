@@ -22,7 +22,7 @@ plugins:
       handlers:
         python:
           options:
-            docstring_style: sphinx
+            docstring_style: google
             show_symbol_type_heading: true
             show_symbol_type_toc: true
   - search

@@ -66,13 +66,17 @@ And here is the disassembly of the relevant functions:
     1236:	c3                   	ret
 ```
 
-The program currently reads a string from standard input and echos it back. We can run it with short strings:
+The program currently reads a string from standard input and echoes it back. It works
+with short input:
+
 ```bash
 $ ./getline
 aaaaa
 aaaaa
 ```
-And it works fine. Using a longer string, however will cause it to crash:
+
+A longer input overflows the stack buffer:
+
 ```bash
 $ ./getline
 aaaaaaaaaaaaaaaaaaa
@@ -81,18 +85,22 @@ aaaaaaaaaaaaaaaaaaa
 [1]    194473 IOT instruction (core dumped)  ./getline
 ```
 
-We will patch this program to fix the vulnerability, by adding a second argument to the `my_getline` function, and printing a message when the buffer would have overflowed. Here is the script:
+The patch adds a buffer-size argument to `my_getline` and returns early with a message
+when the next byte would exceed that bound:
 
 ```python title="examples/multiple_patches/patch.py"
 --8<-- "examples/multiple_patches/patch.py"
 ```
 
-This patch adds the buffer size as a second argument to `my_getline`. To do this we insert instructions at the beginning to save the argument, and in the loop body we insert a check to see if the index is out of bounds. When it is, we print a message, which was inserted using the `InsertDataPatch`. We can use the `SAVE_CONTEXT` and `RESTORE_CONTEXT` macros (expanded by Patcherex2) to do operations that could modify data we have in registers, like calling a function. We also insert instructions in `main` to put the buffer size in `esi` before calling the function. Now we can run the script to patch the binary and run the new fixed program:
+The patches run in list order. Before the assembly that references the message is
+applied, `InsertDataPatch` allocates it and registers `<my_str>`. The assembly can
+also reference the existing `<puts>` symbol. `SAVE_CONTEXT` and `RESTORE_CONTEXT`
+preserve registers around the call. Another insertion places the buffer size in
+`esi` before `main` calls `my_getline`.
+
 ```bash
-$ ./getline.patched 
+$ ./getline.patched
 aaaaaaaaaaaaaaaaaaaaaaa
 Ran out of space
 aaaaaaaaa
 ```
-
-We have successfully fixed the bug with Patcherex2.

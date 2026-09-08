@@ -1,0 +1,15 @@
+{
+  "files.associations": {
+    "pyproject.toml": "toml",
+    "*.toml": "toml"
+  },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "ruff.configuration": "${workspaceFolder}/pyproject.toml"
+}

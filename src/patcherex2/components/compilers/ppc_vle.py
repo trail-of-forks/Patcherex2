@@ -1,16 +1,31 @@
-import logging
-import os
+from __future__ import annotations
 
-from ..assets.assets import Assets
-from .compiler import Compiler
+from collections.abc import Sequence
+from typing import final
 
-logger = logging.getLogger(__name__)
+from patcherex2.components.assets import DEFAULT_ASSET_RESOLVER, AssetResolver
+from patcherex2.components.command_runner import DEFAULT_COMMAND_RUNNER, CommandRunner
+from patcherex2.components.compilers.command import CommandObjectCompiler
 
 
-class PpcVle(Compiler):
-    def __init__(self, p) -> None:
-        super().__init__(p)
-        self.assets_path = Assets("ppc_vle").path
-        self._compiler = os.path.join(self.assets_path, "powerpc-eabivle-gcc")
-        self._linker = os.path.join(self.assets_path, "powerpc-eabivle-ld")
-        self._compiler_flags = ["-mno-vle"]
+@final
+class PpcVleObjectCompiler(CommandObjectCompiler):
+    """Compile PowerPC VLE objects with the bundled VLE toolchain."""
+
+    def __init__(
+        self,
+        position_independent: bool,
+        non_pic_compiler_flags: Sequence[str] = (),
+        *,
+        asset_resolver: AssetResolver = DEFAULT_ASSET_RESOLVER,
+        command_runner: CommandRunner = DEFAULT_COMMAND_RUNNER,
+    ) -> None:
+        assets_path = asset_resolver.resolve("ppc_vle")
+        self.linker = str(assets_path / "powerpc-eabivle-ld")
+        super().__init__(
+            str(assets_path / "powerpc-eabivle-gcc"),
+            ["-mno-vle"],
+            position_independent,
+            non_pic_compiler_flags,
+            command_runner=command_runner,
+        )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import nyxstone
 
-from .disassembler import Disassembler
+from patcherex2.components.disassemblers.disassembler import Disassembler, Instruction
 
 
 class Nyxstone(Disassembler):
@@ -12,9 +12,9 @@ class Nyxstone(Disassembler):
         self.features = features
         self.ns = nyxstone.Nyxstone(target_triple, cpu, features)
 
-    def disassemble(self, input: bytes, base=0, **kwargs) -> list[dict[str, int | str]]:
-        ns_insns = self.ns.disassemble_to_instructions(bytearray(input), base)
-        result = []
+    def disassemble(self, input: bytes, base=0, **kwargs) -> list[Instruction]:
+        ns_insns = self.ns.disassemble_to_instructions(list(input), base)
+        result: list[Instruction] = []
         for insn in ns_insns:
             if self.target_triple == "riscv32" and insn.assembly.split(" ")[0] in [
                 "j",
@@ -37,9 +37,7 @@ class Nyxstone(Disassembler):
                     "address": insn.address,
                     "size": len(insn.bytes),
                     "mnemonic": insn.assembly.split(" ")[0],
-                    "op_str": insn.assembly.split(" ", 1)[1]
-                    if " " in insn.assembly
-                    else "",
+                    "op_str": insn.assembly.split(" ", 1)[1] if " " in insn.assembly else "",
                 }
             )
         return result

@@ -49,7 +49,27 @@ docker run --rm -it -v ${PWD}:/workdir -w /workdir patcherex2
 
 
 ## Usage
-You can find usage examples [here](https://purseclab.github.io/Patcherex2/examples/insert_instruction_patch/).
+
+Every patching session requires an explicit target. The target composes the
+architecture, image backend, analyzer, allocation policy, and runtime model:
+
+```python
+from patcherex2 import InsertInstructionPatch, PatchSession
+from patcherex2.targets import ELF_AMD64_LINUX
+
+with PatchSession.load_binary("program", target=ELF_AMD64_LINUX) as session:
+    session.patches.append(InsertInstructionPatch(0x401000, "nop"))
+    session.apply_patches()
+    session.save_binary()
+```
+
+`load_binary()` accepts strings and path-like objects. The context manager owns
+components it constructs, while injected analyzers, compilers, and assembly backends
+remain owned by the caller.
+
+See the [usage examples](https://purseclab.github.io/Patcherex2/examples/insert_instruction_patch/)
+and [target guide](https://purseclab.github.io/Patcherex2/advanced_usages/add_new_target_support/)
+for more detail.
 
 
 ## Documentation
@@ -72,7 +92,11 @@ ModifyFunctionPatch          | 🟨 | 🟩 | 🟩 | 🟩 | 🟨 | 🟨 | 🟨 | 
 
 🟩 Fully Functional, 🟨 Limited Functionality, 🟥 Not Working, ⬜ Not Tested, 🟪 Work in Progress
 
+Bare-metal declarations include `ARM_ELF_BARE`, `ARM_RAW_BARE`,
+`LEON3_ELF_BARE`, `PPC_PEGASOS2_RAW_BARE`, `PPC_VLE_IHEX_BARE`, and
+`RISCV32_IHEX_BARE`. Bare-metal targets require format- and device-specific
+configuration; see the [ARM bare-metal guide](https://purseclab.github.io/Patcherex2/advanced_usages/arm_bare/).
+
 
 ## Acknowledgements
 This project was initially developed as part of the [DARPA AMP](https://www.darpa.mil/program/assured-micropatching) program, under contract N6600120C4031. This project is also supported by NSF, under [Award \# 2442339](https://www.nsf.gov/awardsearch/show-award?AWD_ID=2442339).
-

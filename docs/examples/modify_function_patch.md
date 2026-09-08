@@ -13,7 +13,8 @@ $ gcc -o add add.c && ./add
 2 + 3 = 5
 ```
 
-Now, we can use Patcherex2 to modify the `add` function to multiply the two arguments instead of adding them.
+`ModifyFunctionPatch` can replace `add` with an implementation that multiplies its
+arguments:
 
 ```python title="examples/modify_function_patch/patch.py"
 --8<-- "examples/modify_function_patch/patch.py"
@@ -26,4 +27,4 @@ $ ./add_patched
 2 + 3 = 6
 ```
 
-💥 We've successfully modified the binary with Patcherex2!
+The replacement is compiled for the selected target and installed in the image.

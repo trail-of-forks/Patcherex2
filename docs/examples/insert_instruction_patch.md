@@ -38,27 +38,20 @@ And here is the disassembly of the compiled binary:
     1194:	c3                   	ret
 ```
 
-Suppose we want to modify the add function to do some 
-extra calculations on the first argument, for example doubling it and adding 5, without changing the rest of the
-function. We can use Patcherex2's `InsertInstructionPatch`
-to insert these instructions at the address `114d` which is
-at the beginning of the function. To insert instructions, we
-need at least enough space to fit a jump instruction
-before the function ends, so we cannot insert them
-later on in the function.
-Here is how:
+Suppose we want to modify `add` to double its first argument and add five without
+changing the rest of the function. `InsertInstructionPatch` installs a trampoline at
+runtime address `0x114D`, near the beginning of the function. The containing basic
+block must have enough relocatable instructions for the trampoline jump.
 
 ```python title="examples/insert_instruction_patch/patch.py"
 --8<-- "examples/insert_instruction_patch/patch.py"
 ```
 
-Now we can run this script and run the patched binary
-to see the result:
+Run the patch script, then execute the patched binary:
 
 ```bash
 $ ./add.patched
 2 + 3 = 12
 ```
 
-We have successfully modified the binary at the
-instruction level.
+The inserted instructions run before the original body continues.

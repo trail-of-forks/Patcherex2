@@ -1,45 +1,73 @@
-from .bin_arm_bare import BinArmBare
-from .bin_ppc_pegasos2_bare import BinPpcPegasos2Bare
-from .elf_aarch64_linux import ElfAArch64Linux
-from .elf_amd64_linux import ElfAmd64Linux
-from .elf_amd64_linux_recomp import ElfAmd64LinuxRecomp
-from .elf_arm_bare import ElfArmBare
-from .elf_arm_linux import ElfArmLinux
-from .elf_arm_linux_recomp import ElfArmLinuxRecomp
-from .elf_arm_mimxrt1052 import ElfArmMimxrt1052
-from .elf_leon3_bare import ElfLeon3Bare
-from .elf_mips64_linux import ElfMips64Linux
-from .elf_mips64el_linux import ElfMips64elLinux
-from .elf_mips_linux import ElfMipsLinux
-from .elf_mipsel_linux import ElfMipselLinux
-from .elf_ppc64_linux import ElfPpc64Linux
-from .elf_ppc64le_linux import ElfPpc64leLinux
-from .elf_ppc_linux import ElfPpcLinux
-from .elf_s390x_linux import ElfS390xLinux
-from .elf_x86_linux import ElfX86Linux
-from .ihex_ppc_bare import IHexPPCBare
-from .target import Target
+from patcherex2.components.placement_strategies import BareMetalAddressSpace
+from patcherex2.targets.arm_bare import ArmBareMetalRuntimeConfig
+from patcherex2.targets.bin_arm_bare import ARM_RAW_BARE, ArmRawImageConfig
+from patcherex2.targets.bin_ppc_pegasos2_bare import PPC_PEGASOS2_RAW_BARE
+from patcherex2.targets.builder import BuiltComponents, ComponentBuilder
+from patcherex2.targets.definitions import (
+    ELF_AARCH64_LINUX,
+    ELF_AMD64_LINUX,
+    ELF_AMD64_LINUX_RECOMP,
+    ELF_ARM_LINUX,
+    ELF_ARM_LINUX_RECOMP,
+    ELF_MIPS64_LINUX,
+    ELF_MIPS64EL_LINUX,
+    ELF_MIPS_LINUX,
+    ELF_MIPSEL_LINUX,
+    ELF_PPC64_LINUX,
+    ELF_PPC64LE_LINUX,
+    ELF_PPC_LINUX,
+    ELF_S390X_LINUX,
+    ELF_X86_LINUX,
+)
+from patcherex2.targets.elf_arm_bare import ARM_ELF_BARE
+from patcherex2.targets.elf_arm_mimxrt1052 import ARM_MIMXRT1052_ELF
+from patcherex2.targets.elf_leon3_bare import LEON3_ELF_BARE
+from patcherex2.targets.ihex_ppc_bare import PPC_VLE_IHEX_BARE
+from patcherex2.targets.ihex_riscv32_bare import RISCV32_IHEX_BARE
+from patcherex2.targets.target import (
+    ArchitectureProfile,
+    ComponentFactory,
+    ComponentOverrides,
+    ComponentSelections,
+    ImageProfile,
+    RuntimeProfile,
+    TargetConfig,
+    TargetDefinition,
+)
 
 __all__ = [
-    "BinArmBare",
-    "BinPpcPegasos2Bare",
-    "ElfAArch64Linux",
-    "ElfAmd64Linux",
-    "ElfAmd64LinuxRecomp",
-    "ElfArmBare",
-    "ElfArmLinux",
-    "ElfArmLinuxRecomp",
-    "ElfArmMimxrt1052",
-    "ElfLeon3Bare",
-    "ElfMips64Linux",
-    "ElfMips64elLinux",
-    "ElfMipsLinux",
-    "ElfMipselLinux",
-    "ElfPpc64Linux",
-    "ElfPpc64leLinux",
-    "ElfPpcLinux",
-    "ElfS390xLinux",
-    "ElfX86Linux",
-    "IHexPPCBare",
-    "Target",
+    "ARM_ELF_BARE",
+    "ARM_MIMXRT1052_ELF",
+    "ARM_RAW_BARE",
+    "ELF_AARCH64_LINUX",
+    "ELF_AMD64_LINUX",
+    "ELF_AMD64_LINUX_RECOMP",
+    "ELF_ARM_LINUX",
+    "ELF_ARM_LINUX_RECOMP",
+    "ELF_MIPS64EL_LINUX",
+    "ELF_MIPS64_LINUX",
+    "ELF_MIPSEL_LINUX",
+    "ELF_MIPS_LINUX",
+    "ELF_PPC64LE_LINUX",
+    "ELF_PPC64_LINUX",
+    "ELF_PPC_LINUX",
+    "ELF_S390X_LINUX",
+    "ELF_X86_LINUX",
+    "LEON3_ELF_BARE",
+    "PPC_PEGASOS2_RAW_BARE",
+    "PPC_VLE_IHEX_BARE",
+    "RISCV32_IHEX_BARE",
+    "ArchitectureProfile",
+    "ArmBareMetalRuntimeConfig",
+    "ArmRawImageConfig",
+    "BareMetalAddressSpace",
+    "BuiltComponents",
+    "ComponentBuilder",
+    "ComponentFactory",
+    "ComponentOverrides",
+    "ComponentSelections",
+    "ImageProfile",
+    "RuntimeProfile",
+    "TargetConfig",
+    "TargetDefinition",
 ]

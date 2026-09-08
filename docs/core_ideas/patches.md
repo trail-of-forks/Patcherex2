@@ -1,100 +1,116 @@
-## Patch Types
+# Patches
 
-The core of Patcherex2 consists of 9 different types of patches, which are used to manipulate the binary in different ways.
+A patch is any object implementing the `Patch` protocol: it exposes an
+`apply(session)` method. Add patches to `PatchSession.patches` in dependency order,
+then apply and save them:
 
-|          | Data              | Instruction         | Function            |
-|---------:|-------------------|---------------------|---------------------|
-| _**Insert**_ | InsertDataPatch   | InsertInstructionPatch | InsertFunctionPatch |
-| _**Remove**_ | RemoveDataPatch   | RemoveInstructionPatch | RemoveFunctionPatch |
-| _**Modify**_ | ModifyDataPatch   | ModifyInstructionPatch | ModifyFunctionPatch |
+```python
+from patcherex2 import InsertDataPatch, InsertInstructionPatch, PatchSession
+from patcherex2.targets import ELF_AMD64_LINUX
 
-These patches are categorized into three tiers:
+with PatchSession.load_binary("program", target=ELF_AMD64_LINUX) as session:
+    session.patches.append(InsertDataPatch("message", b"Hello\0"))
+    session.patches.append(InsertInstructionPatch(0x401000, "lea rdi, [<message>]"))
+    session.apply_patches()
+    session.save_binary()
+```
 
- - Data Patches: 
-    Operating at the raw bytes level, data patches are ideal for patching the `.data` section or any other raw data.
+The built-in patches operate at four levels:
 
- - Instruction Patches:
-    These patches target the instruction level, enabling modifications to the assembly code of the binary.
+| Level | Insert | Modify | Remove |
+|---|---|---|---|
+| Data | `InsertDataPatch` | `ModifyDataPatch` | `RemoveDataPatch` |
+| Instruction | `InsertInstructionPatch` | `ModifyInstructionPatch` | `RemoveInstructionPatch` |
+| Function | `InsertFunctionPatch` | `ModifyFunctionPatch` | — |
+| Raw bytes | — | `ModifyRawBytesPatch` | — |
 
- - Function Patches:
-    At the highest level, function patches manipulate the binary through C code, this level deals with modifications at the function level.
+There is no `RemoveFunctionPatch`. To disable a function, replace it with an
+appropriate implementation or modify its instructions explicitly.
 
-Each tier features three patch types:
+## Address Kinds
 
- - Insert Patch: Adds new data, instructions, or functions to the binary.
- - Remove Patch: Deletes existing data, instructions, or functions from the binary.
- - Modify Patch: Replaces the content of data, instructions, or functions within the binary.
+Most instruction, function, and data-modification patches accept runtime memory
+addresses. They use the selected `BinaryAnalyzer` to translate those addresses into
+file offsets.
 
-### Insert{Data, Instruction, Function}Patch
- - Syntax
-    <!-- fmt: off -->
-    ```python
-    Insert*Patch(addr_or_name, content)
-    ```
-    <!-- fmt: on -->
-    - Arguments
-        - `addr_or_name`: The address or name of the {data, instruction, function} to be inserted.
-            - When the first argument is an address, patcherex will insert content right before the given address.
-            - When the first argument is a name, patcherex will automatically find free spaces in the binary and insert the content there, and the `name` provided can be later used for referencing the inserted content.
-        - `content`: The content to be inserted.
-            - Content is different for each patch type:
-                - For `InsertDataPatch`, `content` is a byte string.
-                - For `InsertInstructionPatch`, `content` is a list of assembly instructions, separated by newlines.
-                - For `InsertFunctionPatch`, `content` is a C function. 
+`ModifyRawBytesPatch` makes the distinction explicit with `AddressType.MEMORY` and
+`AddressType.FILE`:
 
-### Modify{Data, Instruction, Function}Patch
- - Syntax
-    <!-- fmt: off -->
-    ```python
-    Modify*Patch(addr_or_name, content)
-    ```
-    <!-- fmt: on -->
-    - Arguments
-        - `addr_or_name`: The address or name of the {data, instruction, function} to be modified.
-            - When the first argument is an address, patcherex will modify the content at the given address.
-            - When the first argument is a name, patcherex will try to first find the address of the given name/symbol and then modify the content at that address.
-        - `content`: The new content to replace the existing content.
-            - Content is different for each patch type:
-                - For `ModifyDataPatch`, `content` is a byte string.
-                - For `ModifyInstructionPatch`, `content` is a list of assembly instructions, separated by newlines.
-                - For `ModifyFunctionPatch`, `content` is a C function.
+```python
+ModifyRawBytesPatch(0x401000, b"\x90", addr_type=AddressType.MEMORY)
+ModifyRawBytesPatch(0x200, b"\x00", addr_type=AddressType.FILE)
+```
 
-### Remove{Data, Instruction, Function}Patch
- - Syntax
-    ```python
-    Remove*Patch(addr_or_name, num_bytes: int)
-    ```
-    - Arguments
-        - `addr_or_name`: The address or name of the {data, instruction, function} to be removed.
-            - When the first argument is an address, patcherex will remove the content at the given address.
-            - When the first argument is a name, patcherex will try to first find the address of the given name/symbol and then remove the content at that address.
-        - `num_bytes`: This is optional for `RemoveInstructionPatch` and `RemoveFunctionPatch`, but required for `RemoveDataPatch`, and specifies the number of bytes to be removed.
+An integer passed to `InsertDataPatch` is a file offset and updates the image there.
+A string instead allocates new writable storage and registers the string as a patch
+symbol.
 
-### Referencing previously inserted content.
+## Data Patches
 
-In patch assembly, `<name>` is replaced with the address of that symbol. The name
-may refer to content inserted by an earlier patch, to any symbol the binary
-analyzer found in the target, or to an entry you passed in `symbols=`.
+`InsertDataPatch(name, data)` allocates initialized writable data and exposes its
+runtime address under `name`. `InsertDataPatch(file_offset, data)` writes at an
+existing file offset.
 
-If a name has no known address, patcherex raises `UnresolvedSymbolError` naming
-it, rather than leaving the reference in the assembly.
+`ModifyDataPatch(memory_address, data)` overwrites data at an existing runtime
+address. `RemoveDataPatch(memory_address, size)` replaces the selected bytes with
+zeroes; it does not shrink the image.
 
-!!! warning "Deprecated: `{name}`"
-    Symbols used to be written `{name}`. That syntax still works but is
-    deprecated and warns, because braces are ambiguous with ARM register lists:
-    in `push {r7}` the braces are assembly, and a target with a symbol named
-    `r7` would have had the instruction silently rewritten. Angle brackets have
-    no such conflict. Use `<name>`.
+## Instruction Patches
 
-Examples:
+`InsertInstructionPatch(memory_address, assembly)` installs a trampoline at the
+given runtime address and places the new instructions in executable storage. Passing
+a name instead creates a named executable block without installing a trampoline.
 
-- This will load effective address of the data `my_data` into the `rsi` register.
-    ```python
-    InsertDataPatch("my_data", b"Hello, World!")
-    InsertInstructionPatch(0xDEADBEEF, "lea rsi, [<my_data>]")
-    ```
-- This will replace the content of function `foo` to call function `bar` and return the result.
-    ```python
-    InsertFunctionPatch("bar", "int bar() { return 42; }")
-    ModifyFunctionPatch("foo", "int bar(void); int foo() { return bar(); }")
-    ```
+By default the source language is `InstructionPatchLanguage.ASM`. C micropatches use
+`InstructionPatchLanguage.C` and an optional `InsertInstructionPatch.CConfig`:
+
+```python
+InsertInstructionPatch(
+    0x401000,
+    "rdi += 1;",
+    language=InstructionPatchLanguage.C,
+    c_config=InsertInstructionPatch.CConfig(scratch_regs=["r10", "r11"]),
+)
+```
+
+`ModifyInstructionPatch(memory_address, assembly)` overwrites decoded instructions,
+padding with architecture NOPs when necessary. `RemoveInstructionPatch` replaces
+either a decoded instruction count or an exact byte count with NOPs:
+
+```python
+RemoveInstructionPatch(0x401000, num_instr=2)
+RemoveInstructionPatch(0x401000, num_bytes=8)
+```
+
+Specify only one of `num_instr` and `num_bytes`. When neither is supplied, one
+instruction is removed.
+
+## Function Patches
+
+`InsertFunctionPatch(name, c_source)` compiles a new named function into executable
+storage. Passing a runtime address instead installs a call to the new function at
+that address. Address-based insertion also supports `prefunc`, `postfunc`, and
+`save_context` options.
+
+`ModifyFunctionPatch(name_or_address, c_source)` replaces an existing function. If
+the compiled replacement does not fit in the original extent, Patcherex2 allocates a
+detour target and replaces the function entry with a jump.
+
+## Symbol References
+
+In patch assembly, `<name>` is replaced with the address of a symbol. The name may
+refer to content inserted by an earlier patch, a mapped symbol reported by the binary
+analyzer, or an explicit entry passed through `symbols=`.
+
+```python
+session.patches.append(InsertDataPatch("message", b"Hello, world!\0"))
+session.patches.append(InsertInstructionPatch(0x401000, "lea rdi, [<message>]\ncall <puts>"))
+```
+
+Patch order matters: `message` must be registered before a later patch can resolve
+it. A missing symbol raises `UnresolvedSymbolError`.
+
+!!! warning "Deprecated symbol syntax"
+    The legacy `{name}` form still works but emits a warning. Braces conflict with
+    assembly constructs such as ARM register lists (`push {r7}`). Use `<name>` for
+    symbol references.

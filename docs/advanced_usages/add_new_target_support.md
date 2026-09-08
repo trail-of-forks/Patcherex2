@@ -1,104 +1,146 @@
 # Adding New Target Support
 
-Patcherex2 has been designed with extensibility in mind, making it easy to add support for new targets. This document will walk you through the process of defining a new target in Patcherex2.
+Targets are immutable declarations, not subclasses. A `TargetDefinition` composes
+independent profiles:
 
-## Defining a New Target
+- `ArchitectureProfile` contains immutable architecture information and selects the
+  assembler, disassembler, compiler, and architecture utilities.
+- `ImageProfile` selects the file-format backend and allocation policy. Placement is
+  optional because ordinary ELF images can derive and extend their mapped ranges,
+  while bare-metal images generally need caller-supplied ranges.
+- `RuntimeProfile` is optional and describes runtime initialization such as copying
+  initialized data from flash into RAM.
+- The target definition selects a binary analyzer appropriate for the complete
+  combination.
 
-The first step is to define a new target class that inherits from the `Target` base class. This class should specify the required components to support the target. Here's an example of the existing `elf_amd64_linux` target definition.
+`ComponentBuilder` is the only layer that turns these declarations into live
+objects. It constructs them in dependency order and passes dependencies explicitly.
 
-<!-- fmt: off -->
-```python title="src/patcherex2/targets/elf_amd64_linux.py"
---8<-- "src/patcherex2/targets/elf_amd64_linux.py"
-```
-<!-- fmt: on -->
+Architecture facts are `ArchitectureInfo` values, not component implementations.
+Standard declarations such as `AMD64`, `ARM`, and `MIPS` live in their corresponding
+`patcherex2.components.arch` modules. A profile stores one directly in its `info` field;
+there is no architecture factory, selection, or constructor-options boundary.
 
-### `detect_target` Method
+## Defining a Target
 
-The `detect_target` static method is responsible for automatically detecting if a given binary is supported by this target. It should return `True` if the binary matches the target criteria, or `False` otherwise. In the example above, it checks if the file is an ELF binary for the AMD64 architecture.
-
-### `get_{component}` Methods
-
-The target definition should define methods to get the required components. The method names should be in the format `get_{component}`. The following are the list of components that must be defined for a target:
-
-- assembler
-- disassembler
-- compiler
-- binary_analyzer (Extract extra information from the binary file)
-- allocation_manager (Find free space or allocate new space in the binary)
-- binfmt_tool (Parse and modify binary formats, such as ELF, PE, IHEX, etc.)
-- utils
-- archinfo (Architecture specific information, such as register names, sizes, etc.)
-
-These methods allow you to specify the appropriate implementation for each component based on the target's requirements. Patcherex2 provides multiple implementations for common components that you can choose from.
-
-##### Adding New Components
-
-If your target requires custom components not provided by Patcherex2, you can define new component classes that inherit from the respective base component classes. These custom components should implement the necessary methods to support your target's specific needs.
-
-## Registering the New Target
-
-Once you have defined your target class, Patcherex2 will automatically register it if it is defined before creating a Patcherex2 instance (`p = Patcherex("/path/to/bin")`). Patcherex2 will call the `detect_target` method of each registered target to determine the appropriate target for the given binary.
-
-## Manually Selecting the Target
-
-If your target is designed for manual selection only (i.e., `detect_target` always returns `False`), or if you want to override the automatic target detection, you can specify the target class when creating the Patcherex2 instance:
+Reuse existing profiles whenever the architecture or image mechanics are unchanged:
 
 ```python
-p = Patcherex("/path/to/binary", target_cls=MyCustomTarget)
-```
+from patcherex2.targets.profiles import (
+    AMD64_LINUX,
+    ELF_IMAGE,
+    standard_analyzer_factory,
+)
+from patcherex2.targets.target import ImageProfile, TargetDefinition
 
-## Configuring the Target
-
-### Selecting Component Implementations
-
-Some targets may support multiple implementations for a given component, allowing you to choose the desired implementation. You can configure the target by passing a configuration dictionary to the Patcherex2 constructor.
-
-For example, if your target's `get_assembler` method supports multiple assemblers:
-
-```python
-def get_assembler(self, assembler):
-    assembler = assembler or "keystone"
-    if assembler == "keystone":
-        return Keystone()
-    elif assembler == "gas":
-        return Gas()
-    raise NotImplementedError()
-```
-
-You can select the assembler like this:
-
-```python
-p = Patcherex("/path/to/binary", target_opts={"assembler": "gas"})
-```
-
-This will use the `Gas` assembler instead of the default `Keystone` assembler.
-
-### Configuring Components
-
-Some component implementations accept additional keyword arguments for configuration. You can pass these options through the `component_opts` parameter when creating the Patcherex2 instance.
-
-For example, if your target's `get_assembler` method accepts keyword arguments:
-
-```python
-def get_assembler(self, assembler, **kwargs):
-    assembler = assembler or "some_assembler"
-    if assembler == "some_assembler":
-        return SomeAssembler(**kwargs)
-    raise NotImplementedError()
-```
-
-You can configure the assembler options like this:
-
-```python
-p = Patcherex(
-    "/path/to/binary", component_opts={"assembler": {"arch": "x86", "mode": "64"}}
+MY_ELF_AMD64 = TargetDefinition(
+    name="my-elf-amd64",
+    architecture=AMD64_LINUX,
+    image=ELF_IMAGE,
+    analyzer=standard_analyzer_factory(),
 )
 ```
 
-This will create the `SomeAssembler` instance with the provided keyword arguments:
+Create a new component implementation only when its behavior is genuinely new. The
+component interfaces remain ABCs or protocols; `ComponentFactory` declares the named
+implementations available for one role:
 
 ```python
-SomeAssembler(arch="x86", mode="64")
+from patcherex2.models import FrozenPatcherexModel
+from patcherex2.targets.target import ComponentFactory
+
+
+class MyImageConfig(FrozenPatcherexModel):
+    image_base: int
+
+    def build(self, binary_path: str) -> MyImageBackend:
+        return MyImageBackend(binary_path, image_base=self.image_base)
+
+
+configured_image = MyImageConfig(image_base=0x1000)
+
+
+MY_IMAGE = ImageProfile(
+    name="my-image",
+    backend=ComponentFactory(
+        role="image backend",
+        default="my-backend",
+        choices={"my-backend": configured_image.build},
+    ),
+    allocator=ELF_IMAGE.allocator,
+)
 ```
 
-By following these steps and leveraging the extensible architecture of Patcherex2, you can easily add support for new targets and customize their behavior to suit your specific requirements.
+`ComponentFactory.select()` returns the selected builder. Each component role defines
+the builder's callable protocol, including only runtime dependencies. Configuration
+is already bound by the caller. Keeping builders next to the profile makes composition visible
+without adding another inheritance hierarchy.
+
+## Selecting a Target
+
+Callers must select a target explicitly:
+
+```python
+from patcherex2 import PatchSession
+
+with PatchSession.load_binary("/path/to/binary", target=MY_ELF_AMD64) as session:
+    ...
+```
+
+Patcherex2 does not infer a concrete target from the input. ELF headers can identify
+the file format and architecture, but cannot reliably distinguish a hosted executable
+from a bare-metal image. Raw images provide even less identifying information.
+
+## Configuration
+
+Selections and configured overrides are grouped in `TargetConfig`. Bind configuration
+inside typed builders before passing them to the component graph. Builders receive
+only their declared runtime dependencies; placement and load policies are injected directly:
+
+```python
+from patcherex2.targets import ComponentOverrides, ComponentSelections, TargetConfig
+from patcherex2.components.binary_analyzer.ghidra import GhidraAnalyzer
+from patcherex2.components.image import ImageBackend
+
+
+def configured_ghidra(binary_path: str, image: ImageBackend):
+    return GhidraAnalyzer.load_binary(binary_path, language="x86:LE:64:default")
+
+
+with PatchSession.load_binary(
+    "/path/to/binary",
+    target=MY_ELF_AMD64,
+    config=TargetConfig(
+        selections=ComponentSelections(
+            compiler="clang19",
+        ),
+        overrides=ComponentOverrides(
+            binary_analyzer=configured_ghidra,
+        ),
+    ),
+) as session:
+    ...
+```
+
+The analyzer returned by this builder is context-managed by the session. An analyzer
+passed directly to `load_binary(binary_analyzer=...)` remains owned by its caller.
+
+## Borrowing an Existing Analyzer
+
+Pass an already-live `BinaryAnalyzer` implementation when the caller owns an open
+Ghidra, IDA, angr, or other analysis session:
+
+```python
+with PatchSession.load_binary(
+    "/path/to/binary",
+    target=MY_ELF_AMD64,
+    binary_analyzer=already_open_analyzer,
+) as session:
+    session.apply_patches()
+```
+
+The injected analyzer bypasses the target's analyzer factory. `PatchSession` borrows
+it: exiting the patch session does not enter, close, or otherwise change the lifetime
+of the analyzer. The caller remains responsible for closing it. A caller can likewise
+inject a `Compiler` or `AssemblyBackend` through the typed `compiler=` and
+`assembly_backend=` parameters; these bypass their corresponding target factories.

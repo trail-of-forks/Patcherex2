@@ -1,95 +1,86 @@
 import logging
+import sys
+from collections.abc import Mapping
+from contextlib import AbstractContextManager
+from typing import Any
 
-from ..components.allocation_managers.allocation_manager import (
-    AllocationManager,
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
+from patcherex2.components.image import ImageBackend
+from patcherex2.targets.profiles import ELF_IMAGE, SPARC_BARE
+from patcherex2.targets.target import ComponentFactory, TargetDefinition
+
+from ..components.allocation_manager import (
     MappedBlock,
     MemoryFlag,
 )
-from ..components.archinfo.sparc import SparcInfo
-from ..components.assemblers.bcc import Bcc as BccAssembler
-from ..components.assemblers.keystone_sparc import KeystoneSparc, keystone
-from ..components.binary_analyzers.angr import AngrAnalyzer
-from ..components.binary_analyzers.ghidra import GhidraAnalyzer
-from ..components.binfmt_tools.elf import ELF
-from ..components.compilers.bcc import Bcc as BccCompiler
-from ..components.disassemblers.capstone import Capstone, capstone
-from ..components.utils.utils import Utils
-from .target import Target
+from ..components.binary_analyzer.angr import AngrAnalyzer
+from ..components.binary_analyzer.ghidra import GhidraAnalyzer
+from ..components.image.elf import ElfImageBackend
 
 logger = logging.getLogger(__name__)
 
 
-class CustomElf(ELF):
-    def _init_memory_analysis(self):
+class Leon3ElfImageBackend(ElfImageBackend):
+    """ELF backend for the LEON3 bare-metal memory layout."""
+
+    @override
+    def _init_memory_analysis(self, allocation_manager) -> None:
         # remove all non-RWX segments
         self._segments = [s for s in self._segments if s["p_flags"] & 0b111 == 0b111]
         block = MappedBlock(
-            self._segments[0]["p_offset"],
-            self._segments[0]["p_vaddr"],
-            self._segments[0]["p_memsz"],
+            file_addr=self._segments[0]["p_offset"],
+            addr=self._segments[0]["p_vaddr"],
+            size=self._segments[0]["p_memsz"],
             is_free=False,
             flag=MemoryFlag.RWX,
         )
-        self.p.allocation_manager.add_block(block)
+        allocation_manager.add_block(block)
 
 
-class ElfLeon3Bare(Target):
-    @staticmethod
-    def detect_target(binary_path):
-        return False
+def _leon3_backend(binary_path: str) -> Leon3ElfImageBackend:
+    return Leon3ElfImageBackend(binary_path)
 
-    def get_assembler(self, assembler):
-        assembler = assembler or "keystone"
-        if assembler == "keystone":
-            return KeystoneSparc(
-                self.p,
-                keystone.KS_ARCH_SPARC,
-                keystone.KS_MODE_SPARC32 + keystone.KS_MODE_BIG_ENDIAN,
-            )
-        elif assembler == "bcc":
-            return BccAssembler(self.p)
-        raise NotImplementedError()
 
-    def get_allocation_manager(self, allocation_manager):
-        allocation_manager = allocation_manager or "default"
-        if allocation_manager == "default":
-            return AllocationManager(self.p)
-        raise NotImplementedError()
+def _angr_analyzer(
+    binary_path: str,
+    _image: ImageBackend,
+    *,
+    config: Mapping[str, Any] | None = None,
+) -> AbstractContextManager[AngrAnalyzer]:
+    return AngrAnalyzer.load_binary(binary_path, **dict(config or {}))
 
-    def get_compiler(self, compiler):
-        compiler = compiler or "bcc"
-        if compiler == "bcc":
-            return BccCompiler(self.p)
-        raise NotImplementedError()
 
-    def get_disassembler(self, disassembler):
-        disassembler = disassembler or "capstone"
-        if disassembler == "capstone":
-            return Capstone(capstone.CS_ARCH_SPARC, capstone.CS_MODE_BIG_ENDIAN)
-        raise NotImplementedError()
+def _ghidra_analyzer(
+    binary_path: str,
+    _image: ImageBackend,
+    *,
+    config: Mapping[str, Any] | None = None,
+) -> AbstractContextManager[GhidraAnalyzer]:
+    return GhidraAnalyzer.load_binary(binary_path, **dict(config or {}))
 
-    def get_binfmt_tool(self, binfmt_tool):
-        binfmt_tool = binfmt_tool or "custom"
-        if binfmt_tool == "custom":
-            return CustomElf(self.p, self.binary_path)
-        raise NotImplementedError()
 
-    def get_binary_analyzer(self, binary_analyzer, **kwargs):
-        binary_analyzer = binary_analyzer or "angr"
-        if binary_analyzer == "angr":
-            return AngrAnalyzer(self.binary_path, **kwargs)
-        if binary_analyzer == "ghidra":
-            return GhidraAnalyzer(self.binary_path, **kwargs)
-        raise NotImplementedError()
+LEON3_ELF_IMAGE = ELF_IMAGE.model_copy(
+    update={
+        "name": "leon3-elf",
+        "backend": ComponentFactory(
+            role="image backend",
+            default="leon3",
+            choices={"leon3": _leon3_backend},
+        ),
+    }
+)
 
-    def get_utils(self, utils):
-        utils = utils or "default"
-        if utils == "default":
-            return Utils(self.p, self.binary_path)
-        raise NotImplementedError()
-
-    def get_archinfo(self, archinfo):
-        archinfo = archinfo or "default"
-        if archinfo == "default":
-            return SparcInfo()
-        raise NotImplementedError()
+LEON3_ELF_BARE = TargetDefinition(
+    name="leon3-elf-bare",
+    architecture=SPARC_BARE,
+    image=LEON3_ELF_IMAGE,
+    analyzer=ComponentFactory(
+        role="binary analyzer",
+        default="angr",
+        choices={"angr": _angr_analyzer, "ghidra": _ghidra_analyzer},
+    ),
+)
