@@ -5,6 +5,7 @@ from patcherex2.components.binary_analyzer import (
     UnknownInstructionModeError,
 )
 from patcherex2.components.binary_analyzer.angr import AngrAnalyzer
+from tests.support.paths import TEST_BINARIES
 
 
 class FakeSymbol:
@@ -98,6 +99,100 @@ def test_load_binary_uses_injected_angr_api():
         ("project", "firmware.elf", {"load_options": {"auto_load_libs": False}}),
         ("cfg", {"normalize": True}),
     ]
+
+
+@pytest.mark.parametrize("use_resolver", [False, True])
+@pytest.mark.parametrize("options", [{}, {"normalize": False}])
+def test_cfg_options_are_resolved_before_analysis_without_mutating_input(use_resolver, options):
+    project = FakeAngrProject(FakeAngrMainObject([]))
+    project.loader.main_object.mapped_base = 0x400000
+    calls = []
+    supplied = dict(options)
+
+    def resolve(selected_project):
+        assert selected_project is project
+        assert calls == ["project"]
+        calls.append("resolve")
+        start = selected_project.loader.main_object.mapped_base + 0x100
+        supplied.update(regions=[(start, start + 0x20)], function_starts=[start])
+        return supplied
+
+    class FakeAngrApi:
+        def create_project(self, binary_path, options):
+            calls.append("project")
+            return project
+
+        def create_cfg(self, selected_project, cfg_options):
+            assert selected_project is project
+            assert calls == (["project", "resolve"] if use_resolver else ["project"])
+            calls.append("cfg")
+            assert cfg_options == {"normalize": True, **supplied}
+            assert cfg_options is not supplied
+            return FakeCfg([])
+
+    with AngrAnalyzer.load_binary(
+        "firmware.elf",
+        angr_cfg_kwargs=resolve if use_resolver else supplied,
+        api=FakeAngrApi(),
+    ) as analyzer:
+        assert analyzer.project is project
+        assert calls[-1] == "cfg"
+
+    expected = dict(options)
+    if use_resolver:
+        expected.update(regions=[(0x400100, 0x400120)], function_starts=[0x400100])
+    assert supplied == expected
+
+
+def test_cfg_resolver_failure_prevents_analysis():
+    failure = ValueError("Cannot resolve function scope")
+    calls = []
+
+    def resolve(project):
+        calls.append("resolve")
+        raise failure
+
+    class FakeAngrApi:
+        def create_project(self, binary_path, options):
+            calls.append("project")
+            return FakeAngrProject(FakeAngrMainObject([]))
+
+        def create_cfg(self, project, options):
+            pytest.fail("CFG construction must not run after scope resolution fails")
+
+    with (
+        pytest.raises(ValueError, match="Cannot resolve function scope") as caught,
+        AngrAnalyzer.load_binary("firmware.elf", angr_cfg_kwargs=resolve, api=FakeAngrApi()),
+    ):
+        pytest.fail("A failed resolver must not yield an analyzer")
+
+    assert caught.value is failure
+    assert calls == ["project", "resolve"]
+
+
+def test_cfg_resolver_recovers_real_symbol_function():
+    scope = []
+
+    def resolve(project):
+        symbol = next(
+            symbol for symbol in project.loader.main_object.symbols if symbol.name == "main"
+        )
+        start = symbol.rebased_addr
+        assert symbol.size > 0
+        scope.append((start, start + symbol.size))
+        return {"regions": list(scope), "function_starts": [start]}
+
+    binary = str(TEST_BINARIES / "amd64" / "printf_nopie")
+    with AngrAnalyzer.load_binary(binary, angr_cfg_kwargs=resolve) as analyzer:
+        assert len(scope) == 1
+        start, _ = scope[0]
+        assert analyzer.cfg.model.get_any_node(start, anyaddr=False) is not None
+        entry = next(
+            symbol
+            for symbol in analyzer.project.loader.main_object.symbols
+            if symbol.name == "_start"
+        )
+        assert analyzer.cfg.model.get_any_node(entry.rebased_addr, anyaddr=False) is None
 
 
 @pytest.mark.parametrize(

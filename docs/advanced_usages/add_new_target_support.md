@@ -152,28 +152,43 @@ constructs the project and CFG before yielding. Pass CFG options before entering
 that context; the analyzer has no mutable `angr_cfg_kwargs` attribute, and accessing
 `analyzer.cfg` does not trigger analysis.
 
-If the scope depends on loader metadata, construct the project first, determine the
-region in the project's loaded address space, then build the CFG and inject the
-finished analyzer. You can create the project with
-`NativeAngrApi().create_project(binary_path, {"auto_load_libs": False})`.
-The following assumes `project` exists and `start` and `end` have been resolved
-against its loader (`end` is exclusive):
+If the scope depends on loader metadata, pass a callback as `angr_cfg_kwargs`.
+It receives the loaded project exactly once and returns options before CFG
+construction. The returned mapping is copied, and `normalize` defaults to `True`
+unless explicitly set. If the callback raises, the exception propagates without
+building a CFG or yielding an analyzer; there is no whole-program fallback.
+
+Use a configured analyzer builder to let the session manage construction and
+ownership. In this example, `resolve_function_scope` is caller-provided logic that
+returns loaded addresses `(start, end)`, with an exclusive end, using the project's
+loader and the caller's desired function:
 
 ```python
-from patcherex2.components.binary_analyzer.angr import AngrAnalyzer, NativeAngrApi
+from collections.abc import Mapping
+from typing import Any
 
-api = NativeAngrApi()
-cfg = api.create_cfg(
-    project,
-    {"normalize": True, "regions": [(start, end)], "function_starts": [start]},
+from patcherex2.components.binary_analyzer.angr import AngrAnalyzer, AngrProjectApi
+from patcherex2.components.image import ImageBackend
+from patcherex2.targets import ComponentOverrides, TargetConfig
+
+
+def resolve_cfg_options(project: AngrProjectApi) -> Mapping[str, Any]:
+    start, end = resolve_function_scope(project)
+    return {"regions": [(start, end)], "function_starts": [start]}
+
+
+def configured_analyzer(binary_path: str, image: ImageBackend):
+    return AngrAnalyzer.load_binary(binary_path, angr_cfg_kwargs=resolve_cfg_options)
+
+
+config = TargetConfig(
+    overrides=ComponentOverrides(binary_analyzer=configured_analyzer),
 )
-analyzer = AngrAnalyzer(project, cfg)
-with PatchSession.load_binary(
-    binary_path, target=MY_ELF_AMD64, binary_analyzer=analyzer
-) as session:
+with PatchSession.load_binary(binary_path, target=MY_ELF_AMD64, config=config) as session:
     ...
 ```
 
-Preserve any other CFG options required by your target when constructing the CFG
-directly. Creating a default session first already runs its analyzer factory, so
-attempting to scope it afterward cannot avoid the initial whole-program analysis.
+Include any other CFG options required by your target in the returned mapping.
+Static mappings remain supported when loaded addresses are already known. Creating
+an analyzer does not defer analysis until its first `cfg` access: resolve the scope
+before construction to avoid an initial whole-program CFG.

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import abc
 import logging
 import sys
 import traceback
 from bisect import bisect_right
 from collections.abc import Generator, Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Any, Protocol, cast, final
+from typing import Any, Protocol, cast, final, runtime_checkable
 
 import angr
 from archinfo import ArchARM
@@ -121,12 +122,21 @@ class NativeAngrApi:
 DEFAULT_ANGR_API = NativeAngrApi()
 
 
+@runtime_checkable
+class CfgOptionsResolver(Protocol):
+    """Callable object that resolves an Angr project API into CFG arguments."""
+
+    @abc.abstractmethod
+    def __call__(self, api: AngrProjectApi) -> Mapping[str, Any]:
+        raise NotImplementedError()
+
+
 @final
 class AngrAnalyzer(BinaryAnalyzer):
     """Analyze a loaded project using an already-built control-flow graph.
 
-    Construct with a project and its CFG when analysis options depend on loader
-    metadata. Otherwise, use ``load_binary`` to build both together. CFG creation
+    Use ``load_binary`` to build both, optionally resolving CFG options from the
+    loaded project. Construct directly to use an existing project and CFG. CFG creation
     is eager: instances do not expose a mutable ``angr_cfg_kwargs`` attribute.
     """
 
@@ -146,7 +156,7 @@ class AngrAnalyzer(BinaryAnalyzer):
         cls,
         binary_path: str,
         angr_kwargs: Mapping[str, Any] | None = None,
-        angr_cfg_kwargs: Mapping[str, Any] | None = None,
+        angr_cfg_kwargs: Mapping[str, Any] | CfgOptionsResolver | None = None,
         *,
         api: AngrApi = DEFAULT_ANGR_API,
     ) -> Generator[AngrAnalyzer]:
@@ -155,9 +165,11 @@ class AngrAnalyzer(BinaryAnalyzer):
         Args:
             binary_path: Path to the binary to analyze.
             angr_kwargs: Project construction options, copied before use.
-            angr_cfg_kwargs: CFG construction options, copied before use.
-                Normalization defaults to True. Set regions and function starts
-                here if their loaded addresses are already known.
+            angr_cfg_kwargs: CFG construction options or a callback returning
+                them from the loaded project. The callback runs once, before CFG
+                construction; exceptions propagate without building a CFG.
+                Options are copied and normalization defaults to True. Regions
+                and function starts must use the project's loaded address space.
             api: Adapter used to construct the project and CFG.
 
         Yields:
@@ -166,14 +178,15 @@ class AngrAnalyzer(BinaryAnalyzer):
         """
         project_options = dict(angr_kwargs or {})
         project_options.setdefault("load_options", {"auto_load_libs": False})
-        cfg_options = dict(angr_cfg_kwargs or {})
+        logger.info("Loading binary with angr")
+        project = api.create_project(binary_path, project_options)
+        logger.info("Loaded binary with angr")
+        options = angr_cfg_kwargs(project) if isinstance(angr_cfg_kwargs, CfgOptionsResolver) else angr_cfg_kwargs
+        cfg_options = dict(options or {})
         # Splitting blocks at incoming branches makes block boundaries useful
         # for instruction insertion.
         cfg_options.setdefault("normalize", True)
 
-        logger.info("Loading binary with angr")
-        project = api.create_project(binary_path, project_options)
-        logger.info("Loaded binary with angr")
         logger.info("Generating CFG with angr")
         cfg = api.create_cfg(project, cfg_options)
         logger.info("Generated CFG with angr")
@@ -236,9 +249,7 @@ class AngrAnalyzer(BinaryAnalyzer):
             for multinode in graph.nodes():
                 nodes = list(_flatten(multinode))
                 cfg_blocks = [func.get_block(node.addr) for node in nodes]
-                instr_addrs = sorted(
-                    {instr_addr for b in cfg_blocks for instr_addr in b.instruction_addrs}
-                )
+                instr_addrs = sorted({instr_addr for b in cfg_blocks for instr_addr in b.instruction_addrs})
                 if not instr_addrs:
                     continue
                 start = min(b.addr for b in cfg_blocks)
@@ -259,8 +270,7 @@ class AngrAnalyzer(BinaryAnalyzer):
             raise
         except Exception:  # noqa: BLE001
             logger.error(
-                "angr RegionIdentifier failed for function containing %s; "
-                "falling back to CFG nodes\n%s",
+                "angr RegionIdentifier failed for function containing %s; falling back to CFG nodes\n%s",
                 hex(addr),
                 traceback.format_exc(),
             )
@@ -274,8 +284,7 @@ class AngrAnalyzer(BinaryAnalyzer):
                 start=self.normalize_addr(bb.addr),
                 size=bb.size,
                 instruction_addrs=tuple(
-                    self.normalize_addr(addr)
-                    - (1 if self.is_thumb(self.normalize_addr(addr)) else 0)
+                    self.normalize_addr(addr) - (1 if self.is_thumb(self.normalize_addr(addr)) else 0)
                     for addr in bb.instruction_addrs
                 ),
             )
@@ -359,8 +368,7 @@ class AngrAnalyzer(BinaryAnalyzer):
             if name_or_addr in self.project.kb.functions:
                 func = self.project.kb.functions[name_or_addr]
                 return FunctionInfo(
-                    addr=self.normalize_addr(func.addr)
-                    - (1 if self.is_thumb(self.normalize_addr(func.addr)) else 0),
+                    addr=self.normalize_addr(func.addr) - (1 if self.is_thumb(self.normalize_addr(func.addr)) else 0),
                     size=func.size,
                 )
             return None
@@ -421,7 +429,5 @@ class AngrAnalyzer(BinaryAnalyzer):
         mode = self.thumb_mode(addr)
         if mode is None:
             addr = self.denormalize_addr(addr)
-            raise UnknownInstructionModeError(
-                f"Cannot determine ARM instruction mode at {hex(addr)}"
-            )
+            raise UnknownInstructionModeError(f"Cannot determine ARM instruction mode at {hex(addr)}")
         return mode
