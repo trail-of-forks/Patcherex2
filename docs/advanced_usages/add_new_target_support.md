@@ -144,3 +144,36 @@ it: exiting the patch session does not enter, close, or otherwise change the lif
 of the analyzer. The caller remains responsible for closing it. A caller can likewise
 inject a `Compiler` or `AssemblyBackend` through the typed `compiler=` and
 `assembly_backend=` parameters; these bypass their corresponding target factories.
+
+### Configuring an angr CFG
+
+`AngrAnalyzer.load_binary(binary_path, angr_kwargs=..., angr_cfg_kwargs=...)`
+constructs the project and CFG before yielding. Pass CFG options before entering
+that context; the analyzer has no mutable `angr_cfg_kwargs` attribute, and accessing
+`analyzer.cfg` does not trigger analysis.
+
+If the scope depends on loader metadata, construct the project first, determine the
+region in the project's loaded address space, then build the CFG and inject the
+finished analyzer. You can create the project with
+`NativeAngrApi().create_project(binary_path, {"auto_load_libs": False})`.
+The following assumes `project` exists and `start` and `end` have been resolved
+against its loader (`end` is exclusive):
+
+```python
+from patcherex2.components.binary_analyzer.angr import AngrAnalyzer, NativeAngrApi
+
+api = NativeAngrApi()
+cfg = api.create_cfg(
+    project,
+    {"normalize": True, "regions": [(start, end)], "function_starts": [start]},
+)
+analyzer = AngrAnalyzer(project, cfg)
+with PatchSession.load_binary(
+    binary_path, target=MY_ELF_AMD64, binary_analyzer=analyzer
+) as session:
+    ...
+```
+
+Preserve any other CFG options required by your target when constructing the CFG
+directly. Creating a default session first already runs its analyzer factory, so
+attempting to scope it afterward cannot avoid the initial whole-program analysis.

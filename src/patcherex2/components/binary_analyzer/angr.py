@@ -123,6 +123,13 @@ DEFAULT_ANGR_API = NativeAngrApi()
 
 @final
 class AngrAnalyzer(BinaryAnalyzer):
+    """Analyze a loaded project using an already-built control-flow graph.
+
+    Construct with a project and its CFG when analysis options depend on loader
+    metadata. Otherwise, use ``load_binary`` to build both together. CFG creation
+    is eager: instances do not expose a mutable ``angr_cfg_kwargs`` attribute.
+    """
+
     def __init__(
         self,
         project: AngrProjectApi,
@@ -143,7 +150,20 @@ class AngrAnalyzer(BinaryAnalyzer):
         *,
         api: AngrApi = DEFAULT_ANGR_API,
     ) -> Generator[AngrAnalyzer]:
-        """Load and analyze a binary for the lifetime of a context manager."""
+        """Load a project and build its CFG before yielding the analyzer.
+
+        Args:
+            binary_path: Path to the binary to analyze.
+            angr_kwargs: Project construction options, copied before use.
+            angr_cfg_kwargs: CFG construction options, copied before use.
+                Normalization defaults to True. Set regions and function starts
+                here if their loaded addresses are already known.
+            api: Adapter used to construct the project and CFG.
+
+        Yields:
+            An analyzer with its CFG already built. Changing the input option
+            mappings afterward does not rebuild or rescope that CFG.
+        """
         project_options = dict(angr_kwargs or {})
         project_options.setdefault("load_options", {"auto_load_libs": False})
         cfg_options = dict(angr_cfg_kwargs or {})
