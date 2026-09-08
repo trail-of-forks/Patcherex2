@@ -22,7 +22,8 @@ dependencies = [
 [project.optional-dependencies]
 ghidra = ["pyghidra>=3.0"]
 ida = ["idapro>=0.0.10"]
-all = ["patcherex2[ghidra]", "patcherex2[ida]"]
+nyxstone = ["nyxstone==0.1.8"]
+all = ["patcherex2[ghidra]", "patcherex2[ida]", "patcherex2[nyxstone]"]
 
 [project.urls]
 "Homepage" = "https://github.com/purseclab/Patcherex2"

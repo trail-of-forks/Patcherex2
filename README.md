@@ -25,6 +25,10 @@ Patcherex2 is available on PyPI and can be installed using pip. Alternatively, y
 ```bash
 pip install patcherex2
 ```
+
+Nyxstone-based assembly and disassembly (including the default RISC-V backends)
+require the optional extra: `uv pip install 'patcherex2[nyxstone]'`.
+Other backends do not require Nyxstone.
 <details>
 <summary>Install from latest commit</summary>
 

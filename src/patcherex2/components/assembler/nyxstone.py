@@ -2,8 +2,6 @@ import logging
 import sys
 from typing import final
 
-import nyxstone
-
 if sys.version_info >= (3, 12):
     from typing import override
 else:
@@ -24,6 +22,17 @@ class NyxstoneAssemblyBackend(AssemblyBackend):
         cpu: str = "",
         features: str = "",
     ) -> None:
+        try:
+            import nyxstone
+        except ModuleNotFoundError as error:
+            if error.name != "nyxstone":
+                raise
+            raise ModuleNotFoundError(
+                "Nyxstone assembly requires the optional dependency; "
+                "install 'patcherex2[nyxstone]'.",
+                name="nyxstone",
+            ) from error
+
         self.target_triple: str = target_triple
         self.cpu: str = cpu
         self.features: str = features

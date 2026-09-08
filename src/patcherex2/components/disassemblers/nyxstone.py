@@ -1,12 +1,21 @@
 from __future__ import annotations
 
-import nyxstone
-
 from patcherex2.components.disassemblers.disassembler import Disassembler, Instruction
 
 
 class Nyxstone(Disassembler):
     def __init__(self, target_triple: str, cpu: str = "", features: str = ""):
+        try:
+            import nyxstone
+        except ModuleNotFoundError as error:
+            if error.name != "nyxstone":
+                raise
+            raise ModuleNotFoundError(
+                "Nyxstone disassembly requires the optional dependency; "
+                "install 'patcherex2[nyxstone]'.",
+                name="nyxstone",
+            ) from error
+
         self.target_triple = target_triple
         self.cpu = cpu
         self.features = features
